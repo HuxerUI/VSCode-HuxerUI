@@ -1,0 +1,115 @@
+{
+  "name": "huxerui",
+  "displayName": "HuxerUI",
+  "description": "Create, build, and run HuxerUI projects in Visual Studio Code.",
+  "version": "0.0.1",
+  "publisher": "huxerui",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": ["Programming Languages", "Other"],
+  "main": "./out/extension.js",
+  "extensionKind": ["workspace"],
+  "activationEvents": [
+    "onTaskType:huxerui",
+    "workspaceContains:HuxerUIProject.cmake",
+    "workspaceContains:mcpp.toml"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "HuxerUI only runs tools in trusted workspaces."
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "commands": [
+      { "command": "huxerui.create", "title": "HuxerUI: Create Project" },
+      { "command": "huxerui.selectSdk", "title": "HuxerUI: Select SDK" },
+      { "command": "huxerui.doctor", "title": "HuxerUI: Diagnose Environment" },
+      { "command": "huxerui.build", "title": "HuxerUI: Build" },
+      { "command": "huxerui.run", "title": "HuxerUI: Run" },
+      { "command": "huxerui.watch", "title": "HuxerUI: Run with Watch" },
+      { "command": "huxerui.stop", "title": "HuxerUI: Stop" },
+      { "command": "huxerui.package", "title": "HuxerUI: Package" },
+      { "command": "huxerui.openArtifacts", "title": "HuxerUI: Open Artifacts" }
+    ],
+    "configuration": {
+      "title": "HuxerUI",
+      "properties": {
+        "huxerui.sdkVersion": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Exact released SDK version for this project's CMake operations. Leave empty to use the project's selected SDK."
+        },
+        "huxerui.sdkPaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "scope": "machine",
+          "description": "Additional installed SDK roots on the execution host."
+        },
+        "huxerui.sourceCheckout": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Optional HuxerUI source checkout on the execution host."
+        },
+        "huxerui.sourceCli": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Absolute path to the HuxerUI CLI built from the configured source checkout."
+        }
+      }
+    },
+    "taskDefinitions": [
+      {
+        "type": "huxerui",
+        "required": ["action"],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["doctor", "build", "run", "watch", "package"],
+            "description": "Operation to run."
+          },
+          "project": {
+            "type": "string",
+            "description": "Project directory relative to this workspace folder."
+          },
+          "buildSystem": {
+            "type": "string",
+            "enum": ["cmake", "mcpp"],
+            "description": "Build system for a directory containing both types of project."
+          },
+          "target": {
+            "type": "string",
+            "enum": ["windows", "macos", "linux", "android", "ios", "web"],
+            "description": "CMake target. Defaults to the execution host when possible."
+          },
+          "configuration": {
+            "type": "string",
+            "enum": ["debug", "release"],
+            "description": "Build configuration. Package defaults to release."
+          },
+          "device": {
+            "type": "string",
+            "description": "Optional Android or iOS destination ID."
+          }
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "1.96.0",
+    "typescript": "^5.9.3"
+  }
+}
