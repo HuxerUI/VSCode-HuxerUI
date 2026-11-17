@@ -12,6 +12,7 @@
   "main": "./out/extension.js",
   "files": [
     "out/**/*.js",
+    "media/*",
     "docs/design.md",
     "LICENSE",
     "README.md"
@@ -22,6 +23,7 @@
   ],
   "extensionKind": ["workspace"],
   "activationEvents": [
+    "onStartupFinished",
     "onTaskType:huxerui",
     "workspaceContains:HuxerUIProject.cmake",
     "workspaceContains:mcpp.toml"
@@ -34,6 +36,16 @@
     "virtualWorkspaces": false
   },
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "huxerui", "title": "HuxerUI", "icon": "media/huxerui.svg" }
+      ]
+    },
+    "views": {
+      "huxerui": [
+        { "id": "huxerui.projects", "name": "HuxerUI", "type": "webview", "icon": "media/huxerui.svg", "when": "workspaceFolderCount == 0 || huxerui.hasProject" }
+      ]
+    },
     "commands": [
       { "command": "huxerui.create", "title": "HuxerUI: Create Project" },
       { "command": "huxerui.selectSdk", "title": "HuxerUI: Select SDK" },
@@ -108,6 +120,16 @@
           "device": {
             "type": "string",
             "description": "Optional Android or iOS destination ID."
+          },
+          "optimization": {
+            "type": "string",
+            "enum": ["default", "size", "minsize"],
+            "description": "Optional CMake build size optimization."
+          },
+          "lto": {
+            "type": "string",
+            "enum": ["on", "off"],
+            "description": "Optional CMake link-time optimization override."
           }
         }
       }

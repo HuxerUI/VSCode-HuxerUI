@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}}; script-src 'nonce-{{nonce}}';">
+  <link rel="stylesheet" href="{{style}}">
+  <title>HuxerUI</title>
+</head>
+<body>
+  <p id="trust" class="notice" hidden>Trust this workspace to create, build, or run a project.</p>
+
+  <section id="create-section" hidden>
+    <header>
+      <h1>Create project</h1>
+      <button id="back" class="quiet" type="button" hidden>Back</button>
+    </header>
+    <form id="create-form">
+      <fieldset id="create-fields">
+        <legend class="sr-only">New project</legend>
+        <div class="kind">
+          <label><input type="radio" name="kind" value="app" checked><span>App</span></label>
+          <label><input type="radio" name="kind" value="library"><span>Library</span></label>
+        </div>
+        <label for="name">Project name</label>
+        <input id="name" type="text" required pattern="[A-Za-z][A-Za-z0-9_\-]*" spellcheck="false" placeholder="MyApp">
+        <div id="project-id-field">
+          <label for="project-id">Project ID</label>
+          <input id="project-id" type="text" required pattern="[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+" spellcheck="false"
+                 placeholder="com.example.myapp" title="Use a lowercase reverse-domain ID. Start each segment with a letter.">
+        </div>
+        <label for="parent">Parent folder</label>
+        <div class="inline">
+          <input id="parent" type="text" readonly placeholder="Choose a folder">
+          <button id="browse" class="quiet" type="button">Browse</button>
+        </div>
+        <label for="create-sdk">SDK</label>
+        <select id="create-sdk"><option>Finding SDKs…</option></select>
+        <fieldset id="platform-field">
+          <legend>Target platforms</legend>
+          <div id="platforms" class="checks"></div>
+        </fieldset>
+        <fieldset id="library-platform-field" aria-describedby="native-platform-help" hidden>
+          <legend>Native integration platforms</legend>
+          <div id="native-platforms" class="checks"></div>
+          <p id="native-platform-help" class="muted">Select only the platforms where your library needs native code.</p>
+        </fieldset>
+        <details id="create-advanced">
+          <summary>Project options</summary>
+          <label for="build-system">Build system</label>
+          <select id="build-system"><option value="cmake">CMake</option><option value="mcpp">mcpp (Preview)</option></select>
+          <div id="template-field" hidden>
+            <label for="template">Template</label>
+            <select id="template"><option value="app">Starter App</option><option value="navigation">Navigation</option></select>
+          </div>
+        </details>
+        <p id="source-note" class="muted" hidden>The mcpp manifest will use the local HuxerUI source path.</p>
+        <button id="create" class="primary" type="submit">Create App</button>
+      </fieldset>
+    </form>
+    <p id="create-status" class="feedback" role="status"></p>
+    <button id="open-existing" class="quiet" type="button" hidden>Open Existing Folder</button>
+  </section>
+
+  <section id="project-section" hidden>
+    <header>
+      <h1>Project</h1>
+      <button id="new" class="quiet" type="button">New</button>
+    </header>
+    <fieldset id="project-fields">
+      <legend class="sr-only">Project settings</legend>
+      <label class="sr-only" for="project">Current project</label>
+      <select id="project"></select>
+      <label id="project-sdk-label" for="project-sdk">SDK</label>
+      <select id="project-sdk"><option>Finding SDKs…</option></select>
+      <div class="setting-pair">
+        <div id="target-field">
+          <label for="target">Target</label>
+          <select id="target"></select>
+        </div>
+        <div>
+          <label for="configuration">Configuration</label>
+          <select id="configuration">
+            <option value="">Auto</option>
+            <option value="debug">Debug</option>
+            <option value="release">Release</option>
+          </select>
+        </div>
+      </div>
+      <p id="configuration-note" class="muted">Run uses Debug. Package uses Release.</p>
+      <div id="device-field" hidden>
+        <label for="device">Device</label>
+        <div class="inline">
+          <select id="device"><option value="">Loading devices…</option></select>
+          <button id="refresh-devices" class="quiet" type="button">Refresh</button>
+        </div>
+        <p id="device-help" class="muted" hidden></p>
+      </div>
+      <details id="project-advanced">
+        <summary>Build options</summary>
+        <label for="optimization">Size optimization</label>
+        <select id="optimization">
+          <option value="">Project default</option>
+          <option value="default">Toolchain default</option>
+          <option value="size">Size</option>
+          <option value="minsize">Minimum size</option>
+        </select>
+        <label for="lto">Link-time optimization</label>
+        <select id="lto"><option value="">Project default</option><option value="on">On</option><option value="off">Off</option></select>
+      </details>
+      <div class="actions">
+        <button data-action="run" type="button" class="primary">Run</button>
+        <button data-action="build" type="button">Build</button>
+        <button data-action="debug" type="button">Debug</button>
+        <button data-action="package" type="button">Package</button>
+      </div>
+      <details id="more-actions">
+        <summary>More actions</summary>
+        <div class="links">
+          <button data-action="watch" type="button">Run with Watch</button>
+          <button data-action="stop" type="button">Stop Task</button>
+          <button data-action="doctor" type="button">Diagnose Environment</button>
+          <button data-action="artifacts" type="button">Open Artifacts</button>
+        </div>
+      </details>
+    </fieldset>
+    <p id="project-status" class="feedback" role="status"></p>
+  </section>
+  <script src="{{script}}" nonce="{{nonce}}"></script>
+</body>
+</html>

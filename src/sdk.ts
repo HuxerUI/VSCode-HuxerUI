@@ -17,6 +17,13 @@ export interface Sdk {
   version: string;
 }
 
+export interface SdkChoice extends vscode.QuickPickItem {
+  sdk?: Sdk;
+  checkout?: string;
+  browse?: 'installed' | 'source';
+  download?: boolean;
+}
+
 // Reuse the inherited spelling to avoid adding a second PATH key on Windows.
 const pathKey = Object.keys(process.env).find(key => key.toUpperCase() === 'PATH') ?? 'PATH';
 
@@ -305,14 +312,13 @@ export class SdkSelection implements vscode.Disposable {
     this.selectionChanged.fire();
   }
 
-  private async pickFrom(candidates: SdkCandidates, root: vscode.Uri | undefined, required: string): Promise<Sdk | undefined> {
-    interface Choice extends vscode.QuickPickItem {
-      sdk?: Sdk;
-      checkout?: string;
-      browse?: 'installed' | 'source';
-      download?: boolean;
-    }
-    const items: Choice[] = [
+  async choices(root?: vscode.Uri): Promise<SdkChoice[]> {
+    const required = configFor(root).get<string>('sdkVersion', '').trim();
+    return this.choiceItems(await this.discover(root, required), required);
+  }
+
+  private choiceItems(candidates: SdkCandidates, required: string): SdkChoice[] {
+    const items: SdkChoice[] = [
       ...candidates.installed.map(sdk => ({ label: 'HuxerUI ' + sdk.version, detail: sdk.root, sdk })),
       ...candidates.sources.map(source => ({
         label: source.sdk ? 'Use HuxerUI Source Checkout' : 'Build CLI and Use Source Checkout',
@@ -328,13 +334,23 @@ export class SdkSelection implements vscode.Disposable {
     if (!required) {
       items.push({ label: 'Browse for Source Checkout…', browse: 'source' });
     }
-    const selection = await vscode.window.showQuickPick(items, {
+    return items;
+  }
+
+  private async pickFrom(candidates: SdkCandidates, root: vscode.Uri | undefined, required: string): Promise<Sdk | undefined> {
+    const selection = await vscode.window.showQuickPick(this.choiceItems(candidates, required), {
       placeHolder: required ? 'Choose HuxerUI ' + required : 'Choose a HuxerUI 0.5 SDK or current source checkout',
       matchOnDetail: true,
     });
-    if (!selection) {
-      return undefined;
+    if (selection) {
+      return this.useChoice(root, selection);
     }
+    return undefined;
+  }
+
+  async useChoice(root: vscode.Uri | undefined, selection: SdkChoice, bind = true): Promise<Sdk | undefined> {
+    checkTrust();
+    const required = configFor(root).get<string>('sdkVersion', '').trim();
     let sdk = selection.sdk;
     if (selection.download) {
       sdk = await this.download(required);
@@ -385,7 +401,9 @@ export class SdkSelection implements vscode.Disposable {
         ? 'Select a complete HuxerUI ' + required + ' SDK for this host.'
         : 'Select a complete HuxerUI 0.5 SDK for this host, or a checkout with its built CLI.');
     }
-    await this.save(root, sdk);
+    if (bind) {
+      await this.save(root, sdk);
+    }
     return sdk;
   }
 }

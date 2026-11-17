@@ -1,9 +1,12 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { ExistingProjectDirectory, generateProject, isProjectName, nativePlatforms, ProjectInput, projectDestination, projectIdError } from './create';
 import { debugProject } from './debug';
+import { deviceHelp, MobileTarget, readyDevices } from './devices';
 import { registerIntelliSense } from './intellisense';
-import { canBuild, hostTarget, isDirectory, isTarget, Project, selectProject, Target, targets } from './projects';
-import { Sdk, sdkCommand, sdkEnvironment, SdkSelection } from './sdk';
+import { BuildSystem, canBuild, hostTarget, isDirectory, isTarget, Project, selectProject, Target, targets } from './projects';
+import { Sdk, SdkSelection } from './sdk';
+import { registerSidebar } from './sidebar';
 import { Action, actions, canRun, Configuration, defaultTarget, HuxerTasks } from './tasks';
 
 function requireTrust(): void {
@@ -28,32 +31,19 @@ async function chooseTarget(project: Project, forDoctor = false): Promise<Target
   return isTarget(selected) ? selected : undefined;
 }
 
-interface DeviceChoice extends vscode.QuickPickItem {
-  id: string;
-}
-
-async function chooseDevice(sdk: Sdk, project: Project, target: 'android' | 'ios'): Promise<string | undefined> {
-  const output = await vscode.window.withProgress({
+async function chooseDevice(sdk: Sdk, project: Project, target: MobileTarget): Promise<string | undefined> {
+  const ready = await vscode.window.withProgress({
     location: vscode.ProgressLocation.Notification,
     title: 'Finding ' + target + ' devices…',
-  }, () => sdkCommand(sdk, ['devices', target], project.root.fsPath));
-  const ready: DeviceChoice[] = [];
-  for (const line of output.split(/\r?\n/)) {
-    const match = /^\s*\[ready\]\s+(\S+)(?:\s+\((.+)\))?\s*$/.exec(line);
-    if (match) {
-      ready.push({ id: match[1], label: match[2] ?? match[1], description: match[1] });
-    }
-  }
+  }, () => readyDevices(sdk, project, target));
   if (!ready.length) {
-    const suggestion = target === 'android'
-      ? 'Start an emulator or connect and authorize an ADB device.'
-      : 'Start an Xcode simulator or connect and pair an iOS device.';
-    throw new Error('No ready ' + target + ' device. ' + suggestion);
+    throw new Error('No ready ' + target + ' device. ' + deviceHelp(target));
   }
   if (ready.length === 1) {
     return ready[0].id;
   }
-  return (await vscode.window.showQuickPick(ready, { placeHolder: 'Choose a device' }))?.id;
+  return (await vscode.window.showQuickPick(ready.map(device => ({ ...device, description: device.id })),
+    { placeHolder: 'Choose a device' }))?.id;
 }
 
 async function chooseConfiguration(action: Action): Promise<Configuration | undefined> {
@@ -98,10 +88,10 @@ async function createProject(sdkSelection: SdkSelection, tasks: HuxerTasks): Pro
   const kind = await vscode.window.showQuickPick(['app', 'library'] as const, {
     placeHolder: 'Choose a project type',
   });
-  if (!kind) {
+  if (kind !== 'app' && kind !== 'library') {
     return;
   }
-  const build = await vscode.window.showQuickPick([
+  const build = await vscode.window.showQuickPick<vscode.QuickPickItem & { value: BuildSystem }>([
     { label: 'CMake', value: 'cmake' },
     { label: 'mcpp', value: 'mcpp', description: 'Desktop C++ modules preview' },
   ], { placeHolder: 'Choose a build system' });
@@ -109,27 +99,29 @@ async function createProject(sdkSelection: SdkSelection, tasks: HuxerTasks): Pro
     return;
   }
   let platforms: Target[] = [];
-  let template: string | undefined;
-  if (build.value === 'cmake' && kind === 'app') {
-    const selected = await vscode.window.showQuickPick(targets.map(target => ({
+  let template: ProjectInput['template'];
+  if (build.value === 'cmake') {
+    const app = kind === 'app';
+    const selected = await vscode.window.showQuickPick((app ? targets : nativePlatforms).map(target => ({
       label: target,
-      description: canBuild(target) ? undefined : 'Requires a different build host',
-      picked: target === hostTarget,
+      description: app && !canBuild(target) ? 'Requires a different build host' : undefined,
+      picked: app && nativePlatforms.includes(target),
       target,
-    })), { canPickMany: true, placeHolder: 'Select application platforms' });
+    })), { canPickMany: true, placeHolder: app ? 'Select application platforms' : 'Select native integration platforms (optional)' });
     if (!selected) {
       return;
     }
-    if (!selected.length) {
+    if (app && !selected.length) {
       throw new Error('Select at least one application platform.');
     }
     platforms = selected.map(item => item.target);
   }
   if (build.value === 'mcpp' && kind === 'app') {
-    template = await vscode.window.showQuickPick(['app', 'navigation'], { placeHolder: 'Choose an mcpp template' });
-    if (!template) {
+    const selected = await vscode.window.showQuickPick(['app', 'navigation'], { placeHolder: 'Choose an mcpp template' });
+    if (selected !== 'app' && selected !== 'navigation') {
       return;
     }
+    template = selected;
   }
   const [parent] = await vscode.window.showOpenDialog({
     canSelectFiles: false, canSelectFolders: true, openLabel: 'Choose Parent Folder',
@@ -139,39 +131,42 @@ async function createProject(sdkSelection: SdkSelection, tasks: HuxerTasks): Pro
   }
   const name = await vscode.window.showInputBox({
     prompt: 'Enter the project name',
-    validateInput: value => /^[A-Za-z][A-Za-z0-9_-]*$/.test(value)
+    validateInput: value => isProjectName(value)
       ? undefined
       : 'Start with a letter and use only letters, digits, underscores, or hyphens.',
   });
   if (!name) {
     return;
   }
-  const root = vscode.Uri.joinPath(parent, name);
-  try {
-    const existing = await vscode.workspace.fs.stat(root);
-    if (existing.type & vscode.FileType.Directory) {
-      const open = await vscode.window.showWarningMessage('The project directory already exists.', 'Open Folder');
-      if (open) {
-        await vscode.commands.executeCommand('vscode.openFolder', root);
-      }
+  let projectId = '';
+  if (build.value === 'cmake') {
+    const id = await vscode.window.showInputBox({
+      prompt: 'Enter the project ID',
+      placeHolder: kind === 'app' ? 'com.example.myapp' : 'com.example.mylibrary',
+      validateInput: value => projectIdError(value.trim()),
+    });
+    if (id === undefined) {
       return;
     }
-    throw new Error('The project path is already in use.');
+    projectId = id.trim();
+  }
+  const input: ProjectInput = { kind, name, projectId, parent, buildSystem: build.value, platforms, template };
+  let root: vscode.Uri;
+  try {
+    root = await projectDestination(input);
   } catch (error) {
-    if (!(error instanceof vscode.FileSystemError && error.code === 'FileNotFound')) {
+    if (!(error instanceof ExistingProjectDirectory)) {
       throw error;
     }
+    const open = await vscode.window.showWarningMessage('The project directory already exists.', 'Open Folder');
+    if (open) {
+      await vscode.commands.executeCommand('vscode.openFolder', error.root);
+    }
+    return;
   }
   const sdk = await sdkSelection.resolve(parent);
   if (!sdk) {
     return;
-  }
-  const args = ['create', kind, name, '--build', build.value, '--agent', 'none'];
-  if (platforms.length) {
-    args.push('--platform', platforms.join(','));
-  }
-  if (template) {
-    args.push('--template', template);
   }
   if (build.value === 'mcpp' && sdk.type === 'source') {
     const create = await vscode.window.showWarningMessage(
@@ -180,13 +175,7 @@ async function createProject(sdkSelection: SdkSelection, tasks: HuxerTasks): Pro
       return;
     }
   }
-  const code = await tasks.create(vscode.workspace.getWorkspaceFolder(parent), root, {
-    executable: sdk.cli, args, cwd: parent.fsPath, env: sdkEnvironment(sdk),
-  });
-  if (code !== 0) {
-    throw new Error('Project creation did not complete. See the task terminal for details.');
-  }
-  await sdkSelection.save(root, sdk);
+  await generateProject(input, root, sdk, sdkSelection, tasks);
   const open = await vscode.window.showInformationMessage(
     'Created HuxerUI project ' + name, 'Open Folder', 'Add to Workspace');
   if (open === 'Open Folder') {
@@ -196,8 +185,8 @@ async function createProject(sdkSelection: SdkSelection, tasks: HuxerTasks): Pro
   }
 }
 
-async function openArtifacts(): Promise<void> {
-  const project = await selectProject();
+async function openArtifacts(selected?: Project): Promise<void> {
+  const project = selected ?? await selectProject();
   if (!project) {
     return;
   }
@@ -233,6 +222,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const tasks = new HuxerTasks(sdkSelection);
   context.subscriptions.push(sdkSelection, tasks, vscode.tasks.registerTaskProvider('huxerui', tasks));
   registerIntelliSense(context, sdkSelection);
+  registerSidebar(context, sdkSelection, tasks, openArtifacts);
 
   function command(id: string, handler: () => Promise<void>): void {
     context.subscriptions.push(vscode.commands.registerCommand('huxerui.' + id, async () => {

@@ -4,6 +4,8 @@ Development build of the HuxerUI extension for the 0.5 SDK.
 
 ## Try the extension
 
+Open **HuxerUI** in the Activity Bar to create an app or library from a form. In a HuxerUI workspace, the sidebar also selects the project, SDK, target, device, and build options for the next run or package task.
+
 1. Run `npm ci`, open this repository in VS Code, and press F5. This opens an Extension Development Host.
 2. In that window, open a trusted HuxerUI project folder or run **HuxerUI: Create Project**.
 3. Run **HuxerUI: Diagnose Environment**, then **HuxerUI: Build** or **HuxerUI: Run**. A single eligible installed SDK or discovered source CLI is selected automatically. Build issues with source locations appear in Problems.

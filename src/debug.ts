@@ -2,7 +2,7 @@ import { constants } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { hostTarget, selectProject } from './projects';
+import { hostTarget, Project, selectProject } from './projects';
 import { sdkEnvironment, SdkSelection } from './sdk';
 import { HuxerTasks } from './tasks';
 
@@ -98,12 +98,12 @@ async function findDebugApp(projectRoot: string, sdkRoot: string, target: DebugT
   return { program, name, sourceDirectory, realProjectRoot };
 }
 
-export async function debugProject(sdkSelection: SdkSelection, tasks: HuxerTasks): Promise<void> {
+export async function debugProject(sdkSelection: SdkSelection, tasks: HuxerTasks, selected?: Project): Promise<void> {
   const target = hostTarget;
   if (target !== 'macos' && target !== 'windows' && target !== 'linux') {
     throw new Error('HuxerUI desktop debugging is currently available on macOS, Windows, and Linux.');
   }
-  const project = await selectProject();
+  const project = selected ?? await selectProject();
   if (!project) {
     return;
   }
@@ -131,7 +131,7 @@ export async function debugProject(sdkSelection: SdkSelection, tasks: HuxerTasks
   }
   starting.add(key);
   try {
-    const sdk = await sdkSelection.resolve(project.root);
+    const sdk = await sdkSelection.resolve(project.root, !selected);
     if (!sdk) {
       return;
     }

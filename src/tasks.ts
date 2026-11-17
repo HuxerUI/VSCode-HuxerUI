@@ -8,6 +8,16 @@ import { Sdk, sdkEnvironment, SdkSelection } from './sdk';
 export const actions = ['doctor', 'build', 'run', 'watch', 'package'] as const;
 export type Action = typeof actions[number];
 export type Configuration = 'debug' | 'release';
+export type Optimization = 'default' | 'size' | 'minsize';
+export type Lto = 'on' | 'off';
+
+export function isOptimization(value: unknown): value is Optimization {
+  return value === 'default' || value === 'size' || value === 'minsize';
+}
+
+export function isLto(value: unknown): value is Lto {
+  return value === 'on' || value === 'off';
+}
 
 const labels: Record<Action, string> = {
   doctor: 'Diagnose Environment',
@@ -22,6 +32,8 @@ export interface RunOptions {
   target?: Target;
   configuration?: Configuration;
   device?: string;
+  optimization?: Optimization;
+  lto?: Lto;
 }
 
 export interface Invocation {
@@ -65,7 +77,7 @@ interface TaskOverrides {
 }
 
 export function invocationFor(project: Project, options: RunOptions, sdk?: Sdk): Invocation {
-  const { action, target, device } = options;
+  const { action, target, device, optimization, lto } = options;
   const configuration = options.configuration ?? (action === 'package' ? 'release' : 'debug');
   const cwd = project.root.fsPath;
   if (!canRun(project, action)) {
@@ -103,6 +115,12 @@ export function invocationFor(project: Project, options: RunOptions, sdk?: Sdk):
   }
   if (device) {
     args.push('--device', device);
+  }
+  if (optimization) {
+    args.push('--optimization', optimization);
+  }
+  if (lto) {
+    args.push('--lto', lto);
   }
   return { executable, args, cwd, env };
 }
@@ -291,6 +309,8 @@ export class HuxerTasks implements vscode.TaskProvider, vscode.Disposable {
       target: value.target ?? defaultTarget(project),
       configuration: value.configuration,
       device: typeof value.device === 'string' ? value.device : undefined,
+      optimization: isOptimization(value.optimization) ? value.optimization : undefined,
+      lto: isLto(value.lto) ? value.lto : undefined,
     }, { definition: task.definition, name: task.name });
   }
 
@@ -310,6 +330,12 @@ export class HuxerTasks implements vscode.TaskProvider, vscode.Disposable {
     }
     if (options.device) {
       taskDefinition.device = options.device;
+    }
+    if (options.optimization) {
+      taskDefinition.optimization = options.optimization;
+    }
+    if (options.lto) {
+      taskDefinition.lto = options.lto;
     }
     const label = labels[options.action] + (project.preview && options.action !== 'doctor' ? ' Preview' : '');
     const targetLabel = options.target ? ' (' + options.target + ')' : '';
