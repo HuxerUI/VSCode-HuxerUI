@@ -7,8 +7,9 @@ import { sdkEnvironment, SdkSelection } from './sdk';
 import { HuxerTasks } from './tasks';
 
 const debuggers = {
-  macos: { extension: 'vadimcn.vscode-lldb', name: 'CodeLLDB' },
-  windows: { extension: 'ms-vscode.cpptools', name: 'Microsoft C/C++' },
+  macos: { extension: 'vadimcn.vscode-lldb', name: 'CodeLLDB', type: 'lldb', platform: 'macOS' },
+  windows: { extension: 'ms-vscode.cpptools', name: 'Microsoft C/C++', type: 'cppvsdbg', platform: 'Windows' },
+  linux: { extension: 'ms-vscode.cpptools', name: 'Microsoft C/C++', type: 'cppdbg', platform: 'Linux' },
 };
 type DebugTarget = keyof typeof debuggers;
 
@@ -16,6 +17,21 @@ const starting = new Set<string>();
 
 function cacheValue(cache: string, key: string): string | undefined {
   return new RegExp('^' + key + ':[^=]+=(.*)$', 'm').exec(cache)?.[1];
+}
+
+async function findGdb(): Promise<string | undefined> {
+  for (const directory of (process.env.PATH ?? '').split(path.delimiter).filter(path.isAbsolute)) {
+    const program = path.join(directory, 'gdb');
+    try {
+      if ((await fs.stat(program)).isFile()) {
+        await fs.access(program, constants.X_OK);
+        return program;
+      }
+    } catch {
+      // A later PATH entry may contain an executable GDB.
+    }
+  }
+  return undefined;
 }
 
 async function findDebugApp(projectRoot: string, sdkRoot: string, target: DebugTarget): Promise<{
@@ -84,18 +100,17 @@ async function findDebugApp(projectRoot: string, sdkRoot: string, target: DebugT
 
 export async function debugProject(sdkSelection: SdkSelection, tasks: HuxerTasks): Promise<void> {
   const target = hostTarget;
-  if (target !== 'macos' && target !== 'windows') {
-    throw new Error('HuxerUI desktop debugging is currently available on macOS and Windows.');
+  if (target !== 'macos' && target !== 'windows' && target !== 'linux') {
+    throw new Error('HuxerUI desktop debugging is currently available on macOS, Windows, and Linux.');
   }
   const project = await selectProject();
   if (!project) {
     return;
   }
-  const platformName = target === 'macos' ? 'macOS' : 'Windows';
-  if (project.buildSystem !== 'cmake' || !project.platforms.includes(target)) {
-    throw new Error('Choose a HuxerUI CMake application or Library Preview with ' + platformName + ' enabled.');
-  }
   const adapter = debuggers[target];
+  if (project.buildSystem !== 'cmake' || !project.platforms.includes(target)) {
+    throw new Error('Choose a HuxerUI CMake application or Library Preview with ' + adapter.platform + ' enabled.');
+  }
   if (!vscode.extensions.getExtension(adapter.extension)) {
     const action = await vscode.window.showErrorMessage(
       'Install and enable ' + adapter.name + ' on the workspace host to debug HuxerUI.', 'Open Extension');
@@ -104,6 +119,10 @@ export async function debugProject(sdkSelection: SdkSelection, tasks: HuxerTasks
         'https://marketplace.visualstudio.com/items?itemName=' + adapter.extension));
     }
     return;
+  }
+  const gdb = target === 'linux' ? await findGdb() : undefined;
+  if (target === 'linux' && !gdb) {
+    throw new Error('Install GDB on the Linux workspace host and make sure gdb is on PATH.');
   }
 
   const key = project.root.toString();
@@ -129,22 +148,22 @@ export async function debugProject(sdkSelection: SdkSelection, tasks: HuxerTasks
       value !== undefined && (name === 'HUXERUI_HOME' || name.toUpperCase() === 'PATH') ? [{ name, value }] : []);
     const base = {
       name: 'HuxerUI: ' + app.name,
+      type: adapter.type,
       request: 'launch',
       program: app.program,
     };
-    const configuration = target === 'windows' ? {
+    const configuration = target === 'macos' ? {
       ...base,
-      type: 'cppvsdbg',
-      // Match the Windows CLI's working directory so the app can find its adjacent files.
-      cwd: path.dirname(app.program),
-      environment,
-      sourceFileMap: sourceMap,
-    } : {
-      ...base,
-      type: 'lldb',
       cwd: projectDirectory,
       env: Object.fromEntries(environment.map(({ name, value }) => [name, value])),
       sourceMap,
+    } : {
+      ...base,
+      // Match the CLI's working directory so the app can find its adjacent files.
+      cwd: path.dirname(app.program),
+      environment,
+      sourceFileMap: sourceMap,
+      ...(gdb ? { MIMode: 'gdb', miDebuggerPath: gdb, externalConsole: false } : {}),
     };
     const launched = await vscode.debug.startDebugging(project.folder, configuration);
     if (!launched) {

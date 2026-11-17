@@ -19,7 +19,9 @@ Managed downloads verify the release SHA-256 and use the host's `tar` to unpack 
 
 ## Debug desktop apps
 
-Use [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) on macOS. On Windows, use [Microsoft C/C++](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) with the MSVC build tools. Install the debugger in the workspace's extension host. Open a CMake application or Library Preview with the host platform enabled, set a source breakpoint, and run **HuxerUI: Debug**. The command builds with the selected SDK in Debug mode and launches the app executable from the CMake integration plan.
+Use [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) on macOS. On Windows and Linux, install [Microsoft C/C++](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) in the workspace's extension host. Windows builds use the MSVC build tools. Linux debugging requires an executable `gdb` on the workspace host's `PATH`.
+
+Open a CMake application or Library Preview with the host platform enabled, set a source breakpoint, and run **HuxerUI: Debug**. The command builds with the selected SDK in Debug mode and launches the app executable from the CMake integration plan.
 
 For composable functions, set a line breakpoint inside the handwritten body. The current generator can assign the same line to the first statement and its generated `Scope` wrapper. In that case, Step Over can return to the handwritten caller. A breakpoint on the next executable statement lets you step inside the body.
 
