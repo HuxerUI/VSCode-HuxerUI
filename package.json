@@ -8,13 +8,17 @@
   "engines": {
     "vscode": "^1.96.0"
   },
-  "categories": ["Programming Languages", "Other"],
+  "categories": ["Programming Languages", "Other", "Extension Packs"],
   "main": "./out/extension.js",
   "files": [
     "out/**/*.js",
     "docs/design.md",
     "LICENSE",
     "README.md"
+  ],
+  "extensionPack": [
+    "ms-vscode.cpptools",
+    "ms-vscode.cmake-tools"
   ],
   "extensionKind": ["workspace"],
   "activationEvents": [

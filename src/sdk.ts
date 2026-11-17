@@ -138,8 +138,15 @@ interface SdkCandidates {
   sources: SourceCandidate[];
 }
 
-export class SdkSelection {
+export class SdkSelection implements vscode.Disposable {
+  private readonly selectionChanged = new vscode.EventEmitter<void>();
+  readonly onDidChangeSelection = this.selectionChanged.event;
+
   constructor(private readonly state: vscode.Memento, private readonly storage: string) {}
+
+  dispose(): void {
+    this.selectionChanged.dispose();
+  }
 
   private async discover(root: vscode.Uri | undefined, required: string): Promise<SdkCandidates> {
     checkTrust();
@@ -287,6 +294,7 @@ export class SdkSelection {
 
   async save(root: vscode.Uri | undefined, sdk: Sdk): Promise<void> {
     await this.state.update(projectKey(root), sdk);
+    this.selectionChanged.fire();
   }
 
   private async pickFrom(candidates: SdkCandidates, root: vscode.Uri | undefined, required: string): Promise<Sdk | undefined> {

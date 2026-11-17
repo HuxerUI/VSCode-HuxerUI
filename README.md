@@ -19,7 +19,7 @@ Managed downloads verify the release SHA-256 and use the host's `tar` to unpack 
 
 ## Debug desktop apps
 
-Use [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) on macOS. On Windows and Linux, install [Microsoft C/C++](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) in the workspace's extension host. Windows builds use the MSVC build tools. Linux debugging requires an executable `gdb` on the workspace host's `PATH`.
+Use [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) on macOS. On Windows and Linux, enable Microsoft C/C++ from the extension pack on the workspace host. Windows builds use the MSVC build tools. Linux debugging requires an executable `gdb` on the workspace host's `PATH`.
 
 Open a CMake application or Library Preview with the host platform enabled, set a source breakpoint, and run **HuxerUI: Debug**. The command builds with the selected SDK in Debug mode and launches the app executable from the CMake integration plan.
 
@@ -28,3 +28,5 @@ For composable functions, set a line breakpoint inside the handwritten body. The
 ## Install a local build
 
 Run `npm ci` and `npm run package:vsix`. In a normal VS Code window, run **Extensions: Install from VSIX...** and select the generated `huxerui-*.vsix` file.
+
+The HuxerUI extension pack installs Microsoft C/C++ and CMake Tools with HuxerUI. You can manage each companion extension independently.

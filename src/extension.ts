@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { debugProject } from './debug';
+import { registerIntelliSense } from './intellisense';
 import { canBuild, hostTarget, isDirectory, isTarget, Project, selectProject, Target, targets } from './projects';
 import { Sdk, sdkCommand, sdkEnvironment, SdkSelection } from './sdk';
 import { Action, actions, canRun, Configuration, defaultTarget, HuxerTasks } from './tasks';
@@ -230,7 +231,8 @@ async function stopTask(tasks: HuxerTasks): Promise<void> {
 export function activate(context: vscode.ExtensionContext): void {
   const sdkSelection = new SdkSelection(context.globalState, context.globalStorageUri.fsPath);
   const tasks = new HuxerTasks(sdkSelection);
-  context.subscriptions.push(tasks, vscode.tasks.registerTaskProvider('huxerui', tasks));
+  context.subscriptions.push(sdkSelection, tasks, vscode.tasks.registerTaskProvider('huxerui', tasks));
+  registerIntelliSense(context, sdkSelection);
 
   function command(id: string, handler: () => Promise<void>): void {
     context.subscriptions.push(vscode.commands.registerCommand('huxerui.' + id, async () => {
