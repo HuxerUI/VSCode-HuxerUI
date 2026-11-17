@@ -57,6 +57,13 @@ interface Definition extends vscode.TaskDefinition, RunOptions {
   buildSystem: Project['buildSystem'];
 }
 
+interface TaskOverrides {
+  sdk?: Sdk;
+  definition?: vscode.TaskDefinition;
+  name?: string;
+  completed?: (code: number) => void;
+}
+
 export function invocationFor(project: Project, options: RunOptions, sdk?: Sdk): Invocation {
   const { action, target, device } = options;
   const configuration = options.configuration ?? (action === 'package' ? 'release' : 'debug');
@@ -284,11 +291,11 @@ export class HuxerTasks implements vscode.TaskProvider, vscode.Disposable {
       target: value.target ?? defaultTarget(project),
       configuration: value.configuration,
       device: typeof value.device === 'string' ? value.device : undefined,
-    }, undefined, task.definition, task.name);
+    }, { definition: task.definition, name: task.name });
   }
 
-  makeTask(project: Project, options: RunOptions, sdk?: Sdk,
-           definition?: vscode.TaskDefinition, name?: string): vscode.Task {
+  makeTask(project: Project, options: RunOptions,
+           { sdk, definition, name, completed }: TaskOverrides = {}): vscode.Task {
     const taskDefinition: Definition = {
       type: 'huxerui',
       action: options.action,
@@ -314,7 +321,7 @@ export class HuxerTasks implements vscode.TaskProvider, vscode.Disposable {
             ? sdk ?? await this.sdkSelection.resolve(project.root, false)
             : undefined;
           return invocationFor(project, options, selected);
-        }, options.action)));
+        }, options.action, completed)));
     if (options.action === 'build') {
       task.group = vscode.TaskGroup.Build;
     }
@@ -323,12 +330,26 @@ export class HuxerTasks implements vscode.TaskProvider, vscode.Disposable {
 
   async create(folder: vscode.WorkspaceFolder | undefined, root: vscode.Uri,
                invocation: Invocation): Promise<number> {
+    return this.executeAndWait(completed => new vscode.Task({ type: 'huxerui-create', path: root.toString() },
+      folder ?? vscode.TaskScope.Global, 'Create Project', 'HuxerUI',
+      new vscode.CustomExecution(async () => this.terminal(root, async () => invocation, undefined, completed))));
+  }
+
+  async buildForDebug(project: Project, sdk: Sdk, target: Target): Promise<number> {
+    return this.executeAndWait(completed => this.makeTask(
+      project, { action: 'build', target, configuration: 'debug' }, {
+        sdk,
+        definition: { type: 'huxerui-debug-build', project: project.root.toString() },
+        name: 'Build for Debugging (' + target + ')',
+        completed,
+      },
+    ));
+  }
+
+  private async executeAndWait(makeTask: (completed: (code: number) => void) => vscode.Task): Promise<number> {
     let completed: (code: number) => void = () => {};
     const result = new Promise<number>(resolve => { completed = resolve; });
-    const task = new vscode.Task({ type: 'huxerui-create', path: root.toString() },
-      folder ?? vscode.TaskScope.Global, 'Create Project', 'HuxerUI',
-      new vscode.CustomExecution(async () => this.terminal(root, async () => invocation, undefined, completed)));
-    await vscode.tasks.executeTask(task);
+    await vscode.tasks.executeTask(makeTask(completed));
     return result;
   }
 

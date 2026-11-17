@@ -16,3 +16,13 @@ The extension uses the toolchain on the workspace host. In a remote window, conf
 **Run with Watch**, **Stop**, **Package**, and **Open Artifacts** are also available for CMake projects. When an ordinary run launches a detached app, close that app through its own UI. mcpp is a preview and uses the host's `mcpp` command and the project's own manifest.
 
 Managed downloads verify the release SHA-256 and use the host's `tar` to unpack the SDK into the extension cache. Offline archive import is described in the [design](docs/design.md).
+
+## Debug desktop apps
+
+Use [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) on macOS. On Windows, use [Microsoft C/C++](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) with the MSVC build tools. Install the debugger in the workspace's extension host. Open a CMake application or Library Preview with the host platform enabled, set a source breakpoint, and run **HuxerUI: Debug**. The command builds with the selected SDK in Debug mode and launches the app executable from the CMake integration plan.
+
+For composable functions, set a line breakpoint inside the handwritten body. The current generator can assign the same line to the first statement and its generated `Scope` wrapper. In that case, Step Over can return to the handwritten caller. A breakpoint on the next executable statement lets you step inside the body.
+
+## Install a local build
+
+Run `npm ci` and `npm run package:vsix`. In a normal VS Code window, run **Extensions: Install from VSIX...** and select the generated `huxerui-*.vsix` file.

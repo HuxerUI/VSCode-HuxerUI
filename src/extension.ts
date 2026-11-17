@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { debugProject } from './debug';
 import { canBuild, hostTarget, isDirectory, isTarget, Project, selectProject, Target, targets } from './projects';
 import { Sdk, sdkCommand, sdkEnvironment, SdkSelection } from './sdk';
 import { Action, actions, canRun, Configuration, defaultTarget, HuxerTasks } from './tasks';
@@ -89,7 +90,7 @@ async function runAction(action: Action, projects: SdkSelection, tasks: HuxerTas
   if (needsDevice && !device) {
     return;
   }
-  await vscode.tasks.executeTask(tasks.makeTask(project, { action, target, configuration, device }, sdk));
+  await vscode.tasks.executeTask(tasks.makeTask(project, { action, target, configuration, device }, { sdk }));
 }
 
 async function createProject(sdkSelection: SdkSelection, tasks: HuxerTasks): Promise<void> {
@@ -254,6 +255,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
   command('create', () => createProject(sdkSelection, tasks));
+  command('debug', () => debugProject(sdkSelection, tasks));
   command('stop', () => stopTask(tasks));
   command('openArtifacts', openArtifacts);
 }

@@ -10,6 +10,12 @@
   },
   "categories": ["Programming Languages", "Other"],
   "main": "./out/extension.js",
+  "files": [
+    "out/**/*.js",
+    "docs/design.md",
+    "LICENSE",
+    "README.md"
+  ],
   "extensionKind": ["workspace"],
   "activationEvents": [
     "onTaskType:huxerui",
@@ -30,6 +36,7 @@
       { "command": "huxerui.doctor", "title": "HuxerUI: Diagnose Environment" },
       { "command": "huxerui.build", "title": "HuxerUI: Build" },
       { "command": "huxerui.run", "title": "HuxerUI: Run" },
+      { "command": "huxerui.debug", "title": "HuxerUI: Debug" },
       { "command": "huxerui.watch", "title": "HuxerUI: Run with Watch" },
       { "command": "huxerui.stop", "title": "HuxerUI: Stop" },
       { "command": "huxerui.package", "title": "HuxerUI: Package" },
@@ -105,6 +112,7 @@
   "scripts": {
     "compile": "tsc -p .",
     "watch": "tsc -w -p .",
+    "package:vsix": "npm exec --yes --package=@vscode/vsce@4.1.1 -- vsce package --allow-missing-repository --no-rewrite-relative-links",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
