@@ -15,7 +15,7 @@ The extension uses the toolchain on the workspace host. In a remote window, conf
 
 **Run with Watch**, **Stop**, **Package**, and **Open Artifacts** are also available for CMake projects. When an ordinary run launches a detached app, close that app through its own UI. mcpp is a preview and uses the host's `mcpp` command and the project's own manifest.
 
-Managed downloads verify the release SHA-256 and use the host's `tar` to unpack the SDK into the extension cache. Offline archive import is described in the [design](docs/design.md).
+SDK downloads run the official HuxerUI installer on the workspace host. It verifies the release checksum and sets `HUXERUI_HOME` and `PATH` for new sessions. HuxerUI commands can use the installed SDK immediately. Restart VS Code from the updated environment to pick up the new default in tools such as CMake Tools.
 
 ## Debug desktop apps
 

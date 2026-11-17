@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
-import { installManagedSdk, isSupportedSdkVersion, managedSdkFolders } from './sdkArchive';
+import { isSupportedSdkVersion, runSdkInstaller } from './sdkInstaller';
 import { buildSourceCli, executableName, isSourceCheckout, sourceCheckouts, sourceCliCandidates } from './sourceSdk';
 
 const execFileAsync = promisify(execFile);
@@ -152,9 +152,6 @@ export class SdkSelection implements vscode.Disposable {
     checkTrust();
     const config = configFor(root);
     const installed = new Set(config.get<string[]>('sdkPaths', []).filter(entry => typeof entry === 'string'));
-    for (const directory of await managedSdkFolders(this.storage)) {
-      installed.add(directory);
-    }
     if (process.env.HUXERUI_HOME) {
       installed.add(process.env.HUXERUI_HOME);
     }
@@ -231,10 +228,21 @@ export class SdkSelection implements vscode.Disposable {
           return undefined;
         }
         const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(300_000)]);
-        return await installManagedSdk(this.storage, required, async (directory, version) => {
-          const sdk = await inspectSdk(directory);
-          return sdk?.version === version ? sdk : undefined;
-        }, signal, message => progress.report({ message }));
+        const prefix = defaultSdkDirectory();
+        if (!prefix) {
+          throw new Error('The official HuxerUI installer is unavailable on this host.');
+        }
+        const hasStandardSdk = await hasInstalledLayout(prefix);
+        const version = await runSdkInstaller(required, prefix, hasStandardSdk, signal, message => progress.report({ message }));
+        const locations = hasStandardSdk ? [prefix] : [];
+        locations.push(path.join(prefix + '-versions', version));
+        for (const location of locations) {
+          const sdk = await inspectSdk(location);
+          if (sdk?.version === version) {
+            return sdk;
+          }
+        }
+        throw new Error('The official installer did not leave a usable HuxerUI ' + version + ' SDK at ' + locations.join(' or ') + '.');
       } catch (error) {
         if (!token.isCancellationRequested) {
           throw error;
@@ -310,7 +318,11 @@ export class SdkSelection implements vscode.Disposable {
         label: source.sdk ? 'Use HuxerUI Source Checkout' : 'Build CLI and Use Source Checkout',
         detail: source.root, sdk: source.sdk, checkout: source.root,
       })),
-      { label: required ? 'Download HuxerUI ' + required + ' SDK' : 'Download Latest HuxerUI SDK', download: true },
+      {
+        label: required ? 'Download HuxerUI ' + required + ' SDK' : 'Download Latest HuxerUI SDK',
+        detail: 'Runs the official installer and updates the default SDK for new terminals on this host.',
+        download: true,
+      },
     ];
     items.push({ label: 'Browse for Installed SDK…', browse: 'installed' });
     if (!required) {
