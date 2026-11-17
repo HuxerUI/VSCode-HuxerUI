@@ -55,13 +55,13 @@
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "Optional HuxerUI source checkout on the execution host."
+          "description": "Preferred HuxerUI source checkout on the execution host. The extension can find or build its CLI."
         },
         "huxerui.sourceCli": {
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "Absolute path to the HuxerUI CLI built from the configured source checkout."
+          "description": "Optional absolute path to a CLI built outside the configured HuxerUI checkout."
         }
       }
     },

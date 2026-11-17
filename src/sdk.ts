@@ -5,9 +5,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
+import { installManagedSdk, isSupportedSdkVersion, managedSdkFolders } from './sdkArchive';
+import { buildSourceCli, executableName, isSourceCheckout, sourceCheckouts, sourceCliCandidates } from './sourceSdk';
 
 const execFileAsync = promisify(execFile);
-const executableName = process.platform === 'win32' ? 'huxerui.exe' : 'huxerui';
 
 export interface Sdk {
   root: string;
@@ -73,9 +74,7 @@ export async function inspectSdk(directory: string, sourceCli?: string): Promise
     const type = sourceCli ? 'source' : 'installed';
     const cli = await fs.realpath(sourceCli ?? path.join(root, 'bin', executableName));
     if (type === 'source') {
-      if (!await fileExists(path.join(root, 'cmake', 'HuxerUIApp.cmake')) ||
-          !await fileExists(path.join(root, 'include', 'huxerui', 'huxerui.h')) ||
-          !await directoryExists(path.join(root, 'tools', 'prebuilt'))) {
+      if (!await isSourceCheckout(root)) {
         return undefined;
       }
     } else if (!await hasInstalledLayout(root)) {
@@ -84,12 +83,12 @@ export async function inspectSdk(directory: string, sourceCli?: string): Promise
 
     await fs.access(cli, constants.X_OK);
     const sdk: Sdk = { root, cli, type, version: '' };
-    const version = /^huxerui\s+((\d+)\.(\d+)\.\d+)\s*$/.exec(await sdkCommand(sdk, ['--version'], root));
+    const version = /^huxerui\s+(\d+\.\d+\.\d+)\s*$/.exec(await sdkCommand(sdk, ['--version'], root))?.[1];
     // Apply the version floor to published SDKs. A source build can still report the previous release number.
-    if (!version || (type === 'installed' && Number(version[2]) === 0 && Number(version[3]) < 5)) {
+    if (!version || (type === 'installed' && !isSupportedSdkVersion(version))) {
       return undefined;
     }
-    sdk.version = version[1];
+    sdk.version = version;
     return sdk;
   } catch {
     return undefined;
@@ -128,13 +127,27 @@ function matchVersion(sdk: Sdk, required: string): boolean {
   return !required || (sdk.type === 'installed' && sdk.version === required);
 }
 
-export class SdkSelection {
-  constructor(private readonly state: vscode.Memento) {}
+interface SourceCandidate {
+  root: string;
+  configured: boolean;
+  sdk?: Sdk;
+}
 
-  private async discover(root?: vscode.Uri): Promise<Sdk[]> {
+interface SdkCandidates {
+  installed: Sdk[];
+  sources: SourceCandidate[];
+}
+
+export class SdkSelection {
+  constructor(private readonly state: vscode.Memento, private readonly storage: string) {}
+
+  private async discover(root: vscode.Uri | undefined, required: string): Promise<SdkCandidates> {
     checkTrust();
     const config = configFor(root);
     const installed = new Set(config.get<string[]>('sdkPaths', []).filter(entry => typeof entry === 'string'));
+    for (const directory of await managedSdkFolders(this.storage)) {
+      installed.add(directory);
+    }
     if (process.env.HUXERUI_HOME) {
       installed.add(process.env.HUXERUI_HOME);
     }
@@ -155,29 +168,109 @@ export class SdkSelection {
       }
     }
 
-    const checkout = config.get<string>('sourceCheckout', '');
-    const checkoutCli = config.get<string>('sourceCli', '');
-    const candidates = await Promise.all([
-      ...Array.from(installed, root => inspectSdk(root)),
-      checkout && checkoutCli ? inspectSdk(checkout, checkoutCli) : undefined,
-    ]);
-    return Array.from(new Map(candidates.filter(sdk => sdk !== undefined)
-      .map(sdk => [sdk.root + '\0' + sdk.cli, sdk])).values());
+    const candidates = await Promise.all(Array.from(installed, directory => inspectSdk(directory)));
+    const matching = candidates.filter((sdk): sdk is Sdk => sdk !== undefined && matchVersion(sdk, required));
+    const distinct = Array.from(new Map(matching.map(sdk => [sdk.root, sdk])).values());
+    if (required) {
+      return { installed: distinct, sources: [] };
+    }
+
+    const setting = config.get<string>('sourceCheckout', '');
+    const configured = path.isAbsolute(setting) ? await fs.realpath(setting).catch(() => '') : '';
+    const cli = config.get<string>('sourceCli', '');
+    const roots = await sourceCheckouts(configured, root?.fsPath);
+    const sources = await Promise.all(roots.map(async directory => ({
+      root: directory,
+      configured: directory === configured,
+      sdk: await this.findSource(directory, directory === configured ? cli : undefined),
+    })));
+    return { installed: distinct, sources };
+  }
+
+  private async findSource(root: string, explicit?: string): Promise<Sdk | undefined> {
+    for (const cli of await sourceCliCandidates(root, this.storage, explicit)) {
+      const sdk = await inspectSdk(root, cli);
+      if (sdk) {
+        return sdk;
+      }
+    }
+    return undefined;
+  }
+
+  private async buildSource(root: string): Promise<Sdk> {
+    return vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: 'Building the HuxerUI CLI from source',
+    }, async () => {
+      const cli = await buildSourceCli(root, this.storage);
+      const sdk = await inspectSdk(root, cli);
+      if (!sdk) {
+        throw new Error('The CLI built from ' + root + ' could not be run on this host.');
+      }
+      return sdk;
+    });
+  }
+
+  private async download(required: string): Promise<Sdk | undefined> {
+    return vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: 'Installing the HuxerUI SDK',
+      cancellable: true,
+    }, async (progress, token) => {
+      const controller = new AbortController();
+      const cancellation = token.onCancellationRequested(() => controller.abort());
+      try {
+        if (token.isCancellationRequested) {
+          return undefined;
+        }
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(300_000)]);
+        return await installManagedSdk(this.storage, required, async (directory, version) => {
+          const sdk = await inspectSdk(directory);
+          return sdk?.version === version ? sdk : undefined;
+        }, signal, message => progress.report({ message }));
+      } catch (error) {
+        if (!token.isCancellationRequested) {
+          throw error;
+        }
+        return undefined;
+      } finally {
+        cancellation.dispose();
+      }
+    });
   }
 
   async resolve(root?: vscode.Uri, prompt = true): Promise<Sdk | undefined> {
     checkTrust();
-    const required = configFor(root).get<string>('sdkVersion', '').trim();
-    const saved = this.state.get<Sdk>(projectKey(root));
+    const config = configFor(root);
+    const required = config.get<string>('sdkVersion', '').trim();
+    const configuredSource = config.get<string>('sourceCheckout', '');
+    const saved = this.state.get<Sdk>(projectKey(root)) ??
+      (required || configuredSource ? undefined : this.state.get<Sdk>(projectKey()));
     if (saved) {
       const sdk = await inspectSdk(saved.root, saved.type === 'source' ? saved.cli : undefined);
       if (sdk && matchVersion(sdk, required)) {
         return sdk;
       }
     }
-    const candidates = (await this.discover(root)).filter(sdk => matchVersion(sdk, required));
-    if (candidates.length === 1) {
-      return candidates[0];
+    const candidates = await this.discover(root, required);
+    const configured = candidates.sources.find(source => source.configured);
+    if (configured) {
+      if (configured.sdk) {
+        return configured.sdk;
+      }
+      if (prompt) {
+        return this.buildSource(configured.root);
+      }
+      throw new Error('The configured HuxerUI checkout needs a CLI. Run HuxerUI: Select SDK to build it.');
+    }
+    if (candidates.installed.length === 1) {
+      return candidates.installed[0];
+    }
+    if (!candidates.installed.length) {
+      const built = candidates.sources.filter(source => source.sdk);
+      if (built.length === 1) {
+        return built[0].sdk;
+      }
     }
     if (prompt) {
       return this.pickFrom(candidates, root, required);
@@ -189,30 +282,32 @@ export class SdkSelection {
 
   async select(root?: vscode.Uri): Promise<Sdk | undefined> {
     const required = configFor(root).get<string>('sdkVersion', '').trim();
-    return this.pickFrom((await this.discover(root)).filter(sdk => matchVersion(sdk, required)), root, required);
+    return this.pickFrom(await this.discover(root, required), root, required);
   }
 
   async save(root: vscode.Uri | undefined, sdk: Sdk): Promise<void> {
     await this.state.update(projectKey(root), sdk);
   }
 
-  private async pickFrom(candidates: Sdk[], root: vscode.Uri | undefined, required: string): Promise<Sdk | undefined> {
+  private async pickFrom(candidates: SdkCandidates, root: vscode.Uri | undefined, required: string): Promise<Sdk | undefined> {
     interface Choice extends vscode.QuickPickItem {
       sdk?: Sdk;
+      checkout?: string;
       browse?: 'installed' | 'source';
-      releases?: boolean;
+      download?: boolean;
     }
-    const items: Choice[] = candidates.map(sdk => ({
-      label: sdk.type === 'source' ? 'HuxerUI source checkout' : 'HuxerUI ' + sdk.version,
-      description: sdk.type,
-      detail: sdk.root,
-      sdk,
-    }));
+    const items: Choice[] = [
+      ...candidates.installed.map(sdk => ({ label: 'HuxerUI ' + sdk.version, detail: sdk.root, sdk })),
+      ...candidates.sources.map(source => ({
+        label: source.sdk ? 'Use HuxerUI Source Checkout' : 'Build CLI and Use Source Checkout',
+        detail: source.root, sdk: source.sdk, checkout: source.root,
+      })),
+      { label: required ? 'Download HuxerUI ' + required + ' SDK' : 'Download Latest HuxerUI SDK', download: true },
+    ];
     items.push({ label: 'Browse for Installed SDK…', browse: 'installed' });
     if (!required) {
       items.push({ label: 'Browse for Source Checkout…', browse: 'source' });
     }
-    items.push({ label: 'Open HuxerUI Releases…', releases: true });
     const selection = await vscode.window.showQuickPick(items, {
       placeHolder: required ? 'Choose HuxerUI ' + required : 'Choose a HuxerUI 0.5 SDK or current source checkout',
       matchOnDetail: true,
@@ -220,11 +315,15 @@ export class SdkSelection {
     if (!selection) {
       return undefined;
     }
-    if (selection.releases) {
-      await vscode.env.openExternal(vscode.Uri.parse('https://github.com/HuxerUI/HuxerUI/releases'));
-      return undefined;
-    }
     let sdk = selection.sdk;
+    if (selection.download) {
+      sdk = await this.download(required);
+      if (!sdk) {
+        return undefined;
+      }
+    } else if (selection.checkout && !sdk) {
+      sdk = await this.buildSource(selection.checkout);
+    }
     if (selection.browse) {
       const source = selection.browse === 'source';
       const [directory] = await vscode.window.showOpenDialog({
@@ -233,17 +332,33 @@ export class SdkSelection {
       if (!directory) {
         return undefined;
       }
-      let cli: vscode.Uri | undefined;
       if (source) {
-        [cli] = await vscode.window.showOpenDialog({
-          canSelectFiles: true, canSelectFolders: false, openLabel: 'Select CLI Built from This Checkout',
-          defaultUri: directory,
-        }) ?? [];
-        if (!cli) {
-          return undefined;
+        if (!await isSourceCheckout(directory.fsPath)) {
+          throw new Error('Choose the root of a HuxerUI source checkout.');
         }
+        const checkout = await fs.realpath(directory.fsPath);
+        sdk = await this.findSource(checkout);
+        if (!sdk) {
+          const action = await vscode.window.showInformationMessage(
+            'No built HuxerUI CLI was found in this checkout.', 'Build CLI', 'Choose Existing CLI…');
+          if (action === 'Build CLI') {
+            sdk = await this.buildSource(checkout);
+          } else if (action === 'Choose Existing CLI…') {
+            const [cli] = await vscode.window.showOpenDialog({
+              canSelectFiles: true, canSelectFolders: false, openLabel: 'Select CLI Built from This Checkout',
+              defaultUri: directory,
+            }) ?? [];
+            if (!cli) {
+              return undefined;
+            }
+            sdk = await inspectSdk(checkout, cli.fsPath);
+          } else {
+            return undefined;
+          }
+        }
+      } else {
+        sdk = await inspectSdk(directory.fsPath);
       }
-      sdk = await inspectSdk(directory.fsPath, cli?.fsPath);
     }
     if (!sdk || !matchVersion(sdk, required)) {
       throw new Error(required

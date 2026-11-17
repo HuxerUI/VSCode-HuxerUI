@@ -6,20 +6,13 @@ Development build of the HuxerUI extension for the 0.5 SDK.
 
 1. Run `npm ci`, open this repository in VS Code, and press F5. This opens an Extension Development Host.
 2. In that window, open a trusted HuxerUI project folder or run **HuxerUI: Create Project**.
-3. Run **HuxerUI: Select SDK** to choose a local 0.5 SDK. For a source build, select the HuxerUI checkout and the CLI built from it.
-4. Run **HuxerUI: Diagnose Environment**, then **HuxerUI: Build** or **HuxerUI: Run**. Build issues with source locations appear in Problems.
+3. Run **HuxerUI: Diagnose Environment**, then **HuxerUI: Build** or **HuxerUI: Run**. A single eligible installed SDK or discovered source CLI is selected automatically. Build issues with source locations appear in Problems.
+4. If no SDK is ready, choose **Download Latest HuxerUI SDK** or **Build CLI and Use Source Checkout**. A project with an exact version pin offers to download that version.
 
-To build a development CLI with HuxerUI checked out beside this repository, run these commands from the extension repository.
-
-```sh
-cmake -S ../HuxerUI/tools/huxerui_cli -B out/huxerui-cli
-cmake --build out/huxerui-cli --config Release
-```
-
-In **Select SDK**, choose **Browse for Source Checkout**, select the HuxerUI checkout, and select the resulting `huxerui` executable under `out/huxerui-cli`.
+**HuxerUI: Select SDK** can override the choice for a project. The extension looks for a nearby `HuxerUI` checkout and common CMake build directories. For a checkout elsewhere, use **Browse for Source Checkout** or set `huxerui.sourceCheckout` on the execution host. A preferred checkout can build its standalone CLI using the host's CMake and C++ compiler. Set `huxerui.sourceCli` for a CLI built at a custom path.
 
 The extension uses the toolchain on the workspace host. In a remote window, configure SDK and toolchain paths on that host. With several SDKs installed, use **Select SDK** to bind each project. CMake projects can pin an exact installed SDK with the folder setting `huxerui.sdkVersion`.
 
 **Run with Watch**, **Stop**, **Package**, and **Open Artifacts** are also available for CMake projects. When an ordinary run launches a detached app, close that app through its own UI. mcpp is a preview and uses the host's `mcpp` command and the project's own manifest.
 
-Built-in SDK discovery and folder selection are available in this development build. Managed download and offline archive import depend on the SDK installer mode described in the [design](docs/design.md).
+Managed downloads verify the release SHA-256 and use the host's `tar` to unpack the SDK into the extension cache. Offline archive import is described in the [design](docs/design.md).

@@ -160,7 +160,7 @@ async function createProject(sdkSelection: SdkSelection, tasks: HuxerTasks): Pro
       throw error;
     }
   }
-  const sdk = await sdkSelection.resolve(vscode.workspace.getWorkspaceFolder(parent)?.uri);
+  const sdk = await sdkSelection.resolve(parent);
   if (!sdk) {
     return;
   }
@@ -227,7 +227,7 @@ async function stopTask(tasks: HuxerTasks): Promise<void> {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-  const sdkSelection = new SdkSelection(context.globalState);
+  const sdkSelection = new SdkSelection(context.globalState, context.globalStorageUri.fsPath);
   const tasks = new HuxerTasks(sdkSelection);
   context.subscriptions.push(tasks, vscode.tasks.registerTaskProvider('huxerui', tasks));
 
