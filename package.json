@@ -2,13 +2,15 @@
   "name": "huxerui",
   "displayName": "HuxerUI",
   "description": "Create, build, and run HuxerUI projects in Visual Studio Code.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "huxerui",
+  "icon": "media/huxerui.png",
   "license": "MIT",
   "engines": {
     "vscode": "^1.96.0"
   },
   "categories": ["Programming Languages", "Other", "Extension Packs"],
+  "keywords": ["huxerui", "C++", "CMake", "UI framework", "declarative UI", "cross-platform"],
   "main": "./out/extension.js",
   "files": [
     "out/**/*.js",
