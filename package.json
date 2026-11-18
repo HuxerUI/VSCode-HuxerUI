@@ -123,6 +123,12 @@
             "type": "string",
             "description": "Optional Android or iOS destination ID."
           },
+          "abis": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "description": "Optional list of canonical ABIs for this CMake target."
+          },
           "optimization": {
             "type": "string",
             "enum": ["default", "size", "minsize"],

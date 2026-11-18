@@ -2,6 +2,8 @@ import { ChildProcess, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { readAbis } from './abi';
+import { androidDeviceAbis, readyDevices } from './devices';
 import { Diagnostics } from './diagnostics';
 import { canBuild, hostTarget, inspectProjects, isTarget, Project, Target } from './projects';
 import { Sdk, sdkEnvironment, SdkSelection } from './sdk';
@@ -33,6 +35,7 @@ export interface RunOptions {
   target?: Target;
   configuration?: Configuration;
   device?: string;
+  abis?: string[];
   optimization?: Optimization;
   lto?: Lto;
 }
@@ -83,7 +86,7 @@ interface TaskOverrides {
 }
 
 export function invocationFor(project: Project, options: RunOptions, sdk?: Sdk): Invocation {
-  const { action, target, device, optimization, lto } = options;
+  const { action, target, device, abis, optimization, lto } = options;
   const configuration = options.configuration ?? (action === 'package' ? 'release' : 'debug');
   const cwd = project.root.fsPath;
   if (!canRun(project, action)) {
@@ -118,6 +121,15 @@ export function invocationFor(project: Project, options: RunOptions, sdk?: Sdk):
   }
   if (device) {
     args.push('--device', device);
+  }
+  if (abis?.length) {
+    if (!readAbis(target, abis)) {
+      throw new Error('Choose a supported ABI for ' + target + '.');
+    }
+    if (target === 'linux' && (action === 'run' || action === 'watch') && abis.length > 1) {
+      throw new Error('Choose one ABI to run a Linux application.');
+    }
+    args.push('--abi', abis.join(','));
   }
   if (optimization) {
     args.push('--optimization', optimization);
@@ -305,11 +317,17 @@ export class HuxerTasks implements vscode.TaskProvider, vscode.Disposable {
         (value.configuration && value.configuration !== 'debug' && value.configuration !== 'release')) {
       return undefined;
     }
+    const target = value.target ?? defaultTarget(project);
+    const abis = readAbis(target, value.abis);
+    if (value.abis !== undefined && !abis) {
+      return undefined;
+    }
     return this.makeTask(project, {
       action: value.action,
-      target: value.target ?? defaultTarget(project),
+      target,
       configuration: value.configuration,
       device: typeof value.device === 'string' ? value.device : undefined,
+      abis,
       optimization: isOptimization(value.optimization) ? value.optimization : undefined,
       lto: isLto(value.lto) ? value.lto : undefined,
     }, { definition: task.definition, name: task.name });
@@ -332,6 +350,9 @@ export class HuxerTasks implements vscode.TaskProvider, vscode.Disposable {
     if (options.device) {
       taskDefinition.device = options.device;
     }
+    if (options.abis?.length) {
+      taskDefinition.abis = options.abis;
+    }
     if (options.optimization) {
       taskDefinition.optimization = options.optimization;
     }
@@ -347,6 +368,14 @@ export class HuxerTasks implements vscode.TaskProvider, vscode.Disposable {
           const selected = project.buildSystem === 'cmake'
             ? sdk ?? await this.sdkSelection.resolve(project.root, false)
             : undefined;
+          if (!sdk && selected && options.target === 'android' && (options.action === 'run' || options.action === 'watch')) {
+            const devices = await readyDevices(selected, project, 'android');
+            const device = options.device ? devices.find(item => item.id === options.device)
+              : devices.length === 1 ? devices[0] : undefined;
+            if (device) {
+              return invocationFor(project, { ...options, device: device.id, abis: androidDeviceAbis(device, options.abis) }, selected);
+            }
+          }
           return invocationFor(project, options, selected);
         }, options.action, completed)));
     if (options.action === 'build') {

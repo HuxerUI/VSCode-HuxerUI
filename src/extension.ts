@@ -2,7 +2,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { defaultAppPlatforms, ExistingProjectDirectory, generateProject, isProjectName, ProjectInput, projectDestination, projectIdError } from './create';
 import { debugProject } from './debug';
-import { deviceHelp, MobileTarget, readyDevices } from './devices';
+import { androidDeviceAbis, Device, deviceHelp, MobileTarget, readyDevices } from './devices';
 import { registerIntelliSense } from './intellisense';
 import { BuildSystem, canBuild, hostTarget, isDirectory, isTarget, Project, selectProject, Target, targets } from './projects';
 import { Sdk, SdkSelection } from './sdk';
@@ -32,7 +32,8 @@ async function chooseTarget(project: Project, forDoctor = false): Promise<Target
   return isTarget(selected) ? selected : undefined;
 }
 
-async function chooseDevice(sdk: Sdk, project: Project, target: MobileTarget): Promise<string | undefined> {
+async function chooseDevice(sdk: Sdk, project: Project, target: MobileTarget):
+  Promise<{ device: Device; automatic?: true } | undefined> {
   const find = () => vscode.window.withProgress({
     location: vscode.ProgressLocation.Notification, title: 'Finding ' + target + ' devices…',
   }, () => readyDevices(sdk, project, target));
@@ -46,10 +47,11 @@ async function chooseDevice(sdk: Sdk, project: Project, target: MobileTarget): P
     ready = await find();
   }
   if (ready.length === 1) {
-    return ready[0].id;
+    return { device: ready[0], automatic: true };
   }
-  return (await vscode.window.showQuickPick(ready.map(device => ({ ...device, description: device.id })),
-    { placeHolder: 'Choose a device' }))?.id;
+  return vscode.window.showQuickPick(ready.map(device => ({
+    label: device.label, description: device.abis?.[0] ?? device.id, device,
+  })), { placeHolder: 'Choose a device' });
 }
 
 async function chooseConfiguration(action: Action): Promise<Configuration | undefined> {
@@ -93,15 +95,17 @@ async function runAction(action: Action | 'setup', projects: SdkSelection, tasks
   }
   const needsDevice = sdk && (target === 'android' || target === 'ios') &&
     (action === 'run' || action === 'watch');
-  const device = needsDevice ? await chooseDevice(sdk, project, target) : undefined;
-  if (needsDevice && !device) {
+  const selected = needsDevice ? await chooseDevice(sdk, project, target) : undefined;
+  if (needsDevice && !selected) {
     return;
   }
+  const device = target === 'ios' && selected?.automatic ? undefined : selected?.device.id;
+  const abis = selected && target === 'android' ? androidDeviceAbis(selected.device) : undefined;
   if (device && sdk && target &&
-      !await prepareToolchain(tasks, project, sdk, { target, operation: 'run', device })) {
+      !await prepareToolchain(tasks, project, sdk, { target, operation: 'run', device, abis })) {
     return;
   }
-  await vscode.tasks.executeTask(tasks.makeTask(project, { action, target, configuration, device }, { sdk }));
+  await vscode.tasks.executeTask(tasks.makeTask(project, { action, target, configuration, device, abis }, { sdk }));
 }
 
 async function createProject(sdkSelection: SdkSelection, tasks: HuxerTasks): Promise<void> {

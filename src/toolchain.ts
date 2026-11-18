@@ -14,6 +14,7 @@ interface ToolchainRequest {
   target: Target;
   operation: Operation;
   device?: string;
+  abis?: string[];
 }
 
 interface Check {
@@ -101,6 +102,9 @@ export async function prepareToolchain(
   const flags = [request.target, '--operation', request.operation, '--sdk', sdk.root];
   if (request.device) {
     flags.push('--device', request.device);
+  }
+  if (request.abis?.length) {
+    flags.push('--abi', request.abis.join(','));
   }
   let plan = await diagnose(project, sdk, request, flags);
   if (toolsReady(plan, request)) {

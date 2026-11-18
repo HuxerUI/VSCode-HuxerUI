@@ -1,18 +1,22 @@
 import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { readAbis, selectableAbis } from './abi';
 import { defaultAppPlatforms, ExistingProjectDirectory, generateProject, ProjectInput, projectDestination } from './create';
 import { debugProject } from './debug';
-import { deviceHelp, isMobile, MobileTarget, readyDevices } from './devices';
-import { canBuild, hostTarget, inspectProjects, isTarget, Project, targets } from './projects';
+import { androidDeviceAbis, deviceHelp, isMobile, MobileTarget, readyDevices } from './devices';
+import { canBuild, hostTarget, inspectProjects, isTarget, Project, Target, targets } from './projects';
 import { Sdk, SdkChoice, SdkSelection } from './sdk';
 import { actions, canRun, defaultTarget, HuxerTasks, isLto, isOptimization, RunOptions } from './tasks';
 import { prepareToolchain, toolchainOperation } from './toolchain';
 
 const viewId = 'huxerui.projects';
 type Message = Record<string, unknown>;
-type Preferences = Omit<RunOptions, 'action' | 'device'> & { devices?: Partial<Record<'android' | 'ios', string>> };
-type MobileOptions = RunOptions & { target: MobileTarget };
+type Preferences = Omit<RunOptions, 'action' | 'device' | 'abis'> & {
+  devices?: Partial<Record<MobileTarget, string>>;
+  abiByTarget?: Partial<Record<Target, string>>;
+};
+type MobileOptions = RunOptions & { target: MobileTarget; followDevice?: boolean };
 
 function projectId(project: Project): string {
   return project.buildSystem + ':' + project.root.toString();
@@ -22,8 +26,13 @@ function preferences(message: Message, project: Project, previous: Preferences):
   const target = isTarget(message.target) && project.platforms.includes(message.target) && canBuild(message.target)
     ? message.target : defaultTarget(project);
   const devices = { ...previous.devices };
+  const abiByTarget = { ...previous.abiByTarget };
   if (isMobile(target) && typeof message.device === 'string') {
     devices[target] = message.device;
+  }
+  if (target && typeof message.abi === 'string') {
+    const abis = readAbis(target, message.abi.split(','));
+    abiByTarget[target] = target === 'android' && message.abi === 'device' ? 'device' : abis?.join(',') ?? '';
   }
   return {
     target,
@@ -31,6 +40,7 @@ function preferences(message: Message, project: Project, previous: Preferences):
     optimization: isOptimization(message.optimization) ? message.optimization : undefined,
     lto: isLto(message.lto) ? message.lto : undefined,
     devices,
+    abiByTarget,
   };
 }
 
@@ -229,6 +239,7 @@ class Sidebar implements vscode.WebviewViewProvider {
       type: 'sdk', area: creating ? 'create' : 'project', project: key, current: current?.root,
       choices: choices.map(choice => ({ label: choice.label, detail: choice.detail, root: choice.sdk?.root })),
       source: current?.type === 'source',
+      abiChoices: !creating && current ? selectableAbis(current.type === 'source') : undefined,
       rebuildSource: !creating && current?.type === 'source' && !current.externalCli,
     });
   }
@@ -302,9 +313,23 @@ class Sidebar implements vscode.WebviewViewProvider {
     const action = message.action;
     if (action === 'continueDevice') {
       const pending = this.pendingDevices.get(key);
-      if (pending && pending.options.target === message.target) {
-        const selected = typeof message.device === 'string' ? message.device : pending.options.device;
-        await this.startOnDevice(project, pending.sdk, pending.options, selected);
+      if (!pending || pending.options.target !== message.target) {
+        return;
+      }
+      const { sdk, options: original } = pending;
+      const { target } = original;
+      const selected = (typeof message.device === 'string' ? message.device : original.device) || undefined;
+      const options = typeof message.abi === 'string' ? {
+        ...original,
+        abis: readAbis(target, message.abi.split(',')),
+        followDevice: target === 'android' && original.action === 'build' && message.abi === 'device',
+      } : original;
+      const operation = toolchainOperation(options.action);
+      if (operation === 'run' || options.followDevice || (target === 'ios' && selected)) {
+        await this.startOnDevice(project, sdk, options, selected);
+      } else if (await prepareToolchain(this.tasks, project, sdk, { target, operation, abis: options.abis })) {
+        await this.clearPendingDevice(key);
+        await this.startTask(project, { ...options, device: undefined }, sdk);
       }
       return;
     }
@@ -340,16 +365,23 @@ class Sidebar implements vscode.WebviewViewProvider {
       }
       return;
     }
-    const device = isMobile(target) && taskAction !== 'doctor' ? options.devices?.[target] || undefined : undefined;
-    const runOptions: RunOptions = { ...options, action: taskAction, device };
+    const operation = toolchainOperation(taskAction);
+    const abi = target ? options.abiByTarget?.[target] : undefined;
+    const abis = sdk && target && selectableAbis(sdk.type === 'source')[target]
+      ? readAbis(target, abi?.split(',')) : undefined;
+    const followDevice = target === 'android' && taskAction === 'build' && abi === 'device';
+    const needsDevice = isMobile(target) && (operation === 'run' || followDevice);
+    const device = isMobile(target) && taskAction !== 'doctor' && (needsDevice || target === 'ios')
+      ? options.devices?.[target] || undefined : undefined;
+    const runOptions: RunOptions = { ...options, action: taskAction, device, abis };
     if (sdk && target && taskAction !== 'doctor') {
       await this.clearPendingDevice(key);
-      const operation = toolchainOperation(taskAction);
-      if (!await prepareToolchain(this.tasks, project, sdk, { target, operation, device })) {
+      // Following a device needs the Android run prerequisites, even for a build-only task.
+      if (!await prepareToolchain(this.tasks, project, sdk, { target, operation: followDevice ? 'run' : operation, device, abis })) {
         return;
       }
-      if (isMobile(target) && (operation === 'run' || device)) {
-        await this.startOnDevice(project, sdk, { ...runOptions, target }, device);
+      if (isMobile(target) && (needsDevice || device)) {
+        await this.startOnDevice(project, sdk, { ...runOptions, target, followDevice }, device);
         return;
       }
     }
@@ -370,13 +402,20 @@ class Sidebar implements vscode.WebviewViewProvider {
         message: devices.length ? 'Choose an available device, then select Continue.' : deviceHelp(target) });
       return;
     }
-    if ((pending || device.id !== options.device) && !await prepareToolchain(this.tasks, project, sdk, {
-      target, operation: toolchainOperation(options.action), device: device.id,
+    if (target === 'ios' && device.kind === 'physical' && options.abis?.some(abi => abi !== 'arm64')) {
+      throw new Error('Choose arm64 or Auto to use a physical iOS device.');
+    }
+    const abis = target === 'android' ? androidDeviceAbis(device, options.abis, options.followDevice) : options.abis;
+    const operation = toolchainOperation(options.action);
+    // Let the CLI resolve iOS Auto from its ready destinations unless the user chose a device.
+    const deviceId = target === 'ios' && operation === 'run' && !selected ? undefined : device.id;
+    if ((pending || deviceId !== options.device || abis !== options.abis) && !await prepareToolchain(this.tasks, project, sdk, {
+      target, operation, device: deviceId, abis,
     })) {
       return;
     }
     await this.clearPendingDevice(key);
-    await this.startTask(project, { ...options, device: device.id }, sdk);
+    await this.startTask(project, { ...options, device: deviceId, abis }, sdk);
   }
 
   private async clearPendingDevice(key: string): Promise<boolean> {

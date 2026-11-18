@@ -10,6 +10,8 @@ let host;
 let creating = draft?.creating;
 let sourceSdk = false;
 let statusReady = false;
+const abiChoicesByProject = new Map();
+let deviceChoices = [];
 
 function send(type, data = {}) {
   vscode.postMessage({ type, project: project?.id, area: creating ? 'create' : 'project', ...data });
@@ -123,6 +125,40 @@ function updateTargetControls() {
   byId('device-field').hidden = !mobileTarget();
   byId('continue-device').hidden = !mobileTarget() || project?.pendingDeviceTarget !== value('target');
   document.querySelector('[data-action="debug"]').hidden = !project?.debug || value('target') !== host;
+  renderAbi();
+}
+
+function renderAbi() {
+  const target = value('target');
+  const available = abiChoicesByProject.get(project?.id)?.[target] ?? [];
+  const physical = target === 'ios' && deviceChoices.some(device => device.id === value('device') && device.kind === 'physical');
+  const choices = physical ? available.filter(abi => abi === 'arm64') : available;
+  byId('abi-field').hidden = !choices.length;
+  const options = [new Option('Auto', '')];
+  if (target === 'android') {
+    options.push(new Option('Follow Device', 'device'));
+  }
+  options.push(...choices.map(abi => new Option(abi, abi)));
+  if (choices.length > 1) {
+    options.push(new Option(choices.join(' + '), choices.join(',')));
+  }
+  const select = byId('abi');
+  select.replaceChildren(...options);
+  const preferred = project?.settings.abiByTarget?.[target] ?? '';
+  select.value = options.some(option => option.value === preferred) ? preferred : '';
+  updateAbiHelp();
+}
+
+function updateAbiHelp() {
+  const target = value('target');
+  byId('abi-help').textContent = target === 'android' && value('abi') === 'device'
+    ? 'Build and Run follow the device. Package uses project defaults.'
+    : {
+        android: 'Auto follows the device for Run. Build and Package use project defaults.',
+        ios: 'Physical devices require arm64. Auto uses the Xcode destination settings.',
+        linux: 'Run uses one ABI. Cross-builds use the configured CMake toolchain.',
+        macos: 'Universal builds require dependencies for both architectures.',
+      }[target] ?? '';
 }
 
 function currentPreferences() {
@@ -131,23 +167,29 @@ function currentPreferences() {
     configuration: value('configuration'),
     optimization: value('optimization'),
     lto: value('lto'),
+    abi: byId('abi-field').hidden ? undefined : value('abi'),
     device: byId('device').disabled ? project?.settings.devices?.[value('target')] : value('device'),
   };
 }
 
-function savePreferences(clearDevice = false) {
+function savePreferences(targetChanged = false) {
   if (!project) {
     return;
   }
   const values = currentPreferences();
-  if (clearDevice) {
+  if (targetChanged) {
     delete values.device;
+    delete values.abi;
   }
   const devices = { ...project.settings.devices };
+  const abiByTarget = { ...project.settings.abiByTarget };
   if (typeof values.device === 'string' && mobileTarget()) {
     devices[values.target] = values.device;
   }
-  project.settings = { ...values, devices };
+  if (typeof values.abi === 'string') {
+    abiByTarget[values.target] = values.abi;
+  }
+  project.settings = { ...values, devices, abiByTarget };
   send('preferences', values);
 }
 
@@ -157,6 +199,7 @@ function mobileTarget() {
 }
 
 function refreshDevices() {
+  deviceChoices = [];
   const mobile = project?.buildSystem === 'cmake' && mobileTarget();
   byId('device-field').hidden = !mobile;
   if (mobile) {
@@ -165,6 +208,7 @@ function refreshDevices() {
     byId('device-help').hidden = true;
     send('devices', { target: value('target') });
   }
+  renderAbi();
 }
 
 function renderSdk(message) {
@@ -191,6 +235,8 @@ function renderSdk(message) {
     sourceSdk = message.source;
     renderCreationOptions();
   } else {
+    abiChoicesByProject.set(message.project, message.abiChoices);
+    renderAbi();
     const rebuild = byId('project-rebuild-cli');
     rebuild.hidden = !message.rebuildSource;
     rebuild.disabled = false;
@@ -234,9 +280,15 @@ window.addEventListener('message', ({ data: message }) => {
     send('sdkList');
   } else if (message.type === 'devices' && message.project === project?.id && message.target === value('target')) {
     const { devices, target } = message;
+    deviceChoices = devices;
     const last = project.settings.devices?.[target];
-    const options = devices.map((device) => new Option(device.label, device.id, false, device.id === last));
-    options.unshift(new Option(devices.length ? 'Auto' : 'No ready devices', '', !last, !last));
+    const supported = abiChoicesByProject.get(message.project)?.[target] ?? [];
+    const deviceAbi = device => device.abis?.find(abi => supported.includes(abi));
+    const options = devices.map(device => new Option([device.label, deviceAbi(device)].filter(Boolean).join(' · '),
+      device.id, false, device.id === last));
+    const automaticAbi = devices.length === 1 ? deviceAbi(devices[0]) : undefined;
+    const automatic = automaticAbi ? 'Auto · ' + automaticAbi : 'Auto';
+    options.unshift(new Option(devices.length ? automatic : 'No ready devices', '', !last, !last));
     if (last && !devices.some(device => device.id === last)) {
       options.splice(1, 0, new Option('Selected device is unavailable', last, false, true));
     }
@@ -244,6 +296,7 @@ window.addEventListener('message', ({ data: message }) => {
     byId('device').disabled = false;
     byId('device-help').textContent = message.help;
     byId('device-help').hidden = devices.length > 0;
+    renderAbi();
   } else if (message.type === 'deviceAction') {
     const owner = projects.find(item => item.id === message.project);
     if (owner) {
@@ -341,15 +394,21 @@ byId('target').addEventListener('change', () => {
   updateTargetControls();
   refreshDevices();
 });
-for (const id of ['configuration', 'optimization', 'lto', 'device']) {
+for (const id of ['configuration', 'optimization', 'lto', 'device', 'abi']) {
   byId(id).addEventListener('change', () => {
     savePreferences();
+    if (id === 'device') {
+      renderAbi();
+    } else if (id === 'abi') {
+      updateAbiHelp();
+    }
     byId('configuration-note').hidden = Boolean(value('configuration'));
   });
 }
 byId('refresh-devices').addEventListener('click', refreshDevices);
 byId('continue-device').addEventListener('click', () => {
-  send('action', { ...currentPreferences(), action: 'continueDevice' });
+  const { target, device, abi } = currentPreferences();
+  send('action', { action: 'continueDevice', target, device, abi });
 });
 for (const button of document.querySelectorAll('[data-action]')) {
   button.addEventListener('click', () => {
