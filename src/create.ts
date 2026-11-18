@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
-import { BuildSystem, Target, targets } from './projects';
+import { BuildSystem, isDirectory, Target, targets } from './projects';
 import { Sdk, sdkEnvironment, SdkSelection } from './sdk';
 import { HuxerTasks } from './tasks';
 
-export const nativePlatforms: readonly Target[] = targets.filter(target => target !== 'web');
+export const defaultAppPlatforms: readonly Target[] = targets.filter(target => target !== 'web');
 
 export interface ProjectInput {
   kind: 'app' | 'library';
@@ -66,9 +66,6 @@ export async function generateProject(input: ProjectInput, root: vscode.Uri, sdk
     if (input.kind === 'app' && !input.platforms.length) {
       throw new Error('Select at least one application platform.');
     }
-    if (input.kind === 'library' && input.platforms.some(platform => !nativePlatforms.includes(platform))) {
-      throw new Error('Select only native integration platforms for the library.');
-    }
     if (input.platforms.length) {
       args.push('--platform', input.platforms.join(','));
     }
@@ -81,6 +78,14 @@ export async function generateProject(input: ProjectInput, root: vscode.Uri, sdk
   });
   if (code !== 0) {
     throw new Error('Project creation did not complete. See the task terminal for details.');
+  }
+  if (input.kind === 'library' && input.buildSystem === 'cmake' && input.platforms.includes('web')) {
+    // The SDK creates a Web Preview but leaves the library's Web source folder to the caller.
+    const webSources = vscode.Uri.joinPath(root, 'platform', 'web', 'src');
+    if (!await isDirectory(webSources)) {
+      await vscode.workspace.fs.createDirectory(webSources);
+      await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(webSources, '.gitkeep'), new Uint8Array());
+    }
   }
   await sdkSelection.save(root, sdk);
 }

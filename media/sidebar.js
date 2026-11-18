@@ -37,7 +37,7 @@ function saveDraft() {
     buildSystem: value('build-system'),
     template: value('template'),
     appPlatforms: selectedPlatforms('platforms'),
-    libraryPlatforms: selectedPlatforms('native-platforms'),
+    libraryPlatforms: selectedPlatforms('library-platforms'),
     creating,
   });
 }
@@ -212,8 +212,8 @@ window.addEventListener('message', ({ data: message }) => {
     byId('create-fields').disabled = !message.trusted;
     byId('project-fields').disabled = !message.trusted;
     if (!statusReady) {
-      makePlatformOptions('platforms', message.platforms, message.nativePlatforms, draft?.appPlatforms);
-      makePlatformOptions('native-platforms', message.nativePlatforms, [], draft?.libraryPlatforms);
+      makePlatformOptions('platforms', message.platforms, message.defaultAppPlatforms, draft?.appPlatforms);
+      makePlatformOptions('library-platforms', message.platforms, [], draft?.libraryPlatforms);
     }
     renderProject();
     showMode(!statusReady || previous !== project?.id);
@@ -244,7 +244,7 @@ window.addEventListener('message', ({ data: message }) => {
     byId('create').disabled = false;
     byId('name').value = '';
     byId('project-id').value = '';
-    for (const input of document.querySelectorAll('#platforms input, #native-platforms input')) {
+    for (const input of document.querySelectorAll('#platforms input, #library-platforms input')) {
       input.checked = input.defaultChecked;
     }
     setStatus('create', '');
@@ -276,7 +276,7 @@ byId('create-form').addEventListener('submit', (event) => {
   setStatus('create', 'Creating project…');
   send('create', {
     name: value('name'), projectId: value('project-id'), kind: kind(), buildSystem: value('build-system'),
-    platforms: selectedPlatforms(kind() === 'app' ? 'platforms' : 'native-platforms'),
+    platforms: selectedPlatforms(kind() === 'app' ? 'platforms' : 'library-platforms'),
     template: value('template'),
   });
 });

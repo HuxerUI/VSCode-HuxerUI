@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { ExistingProjectDirectory, generateProject, isProjectName, nativePlatforms, ProjectInput, projectDestination, projectIdError } from './create';
+import { defaultAppPlatforms, ExistingProjectDirectory, generateProject, isProjectName, ProjectInput, projectDestination, projectIdError } from './create';
 import { debugProject } from './debug';
 import { deviceHelp, MobileTarget, readyDevices } from './devices';
 import { registerIntelliSense } from './intellisense';
@@ -102,12 +102,12 @@ async function createProject(sdkSelection: SdkSelection, tasks: HuxerTasks): Pro
   let template: ProjectInput['template'];
   if (build.value === 'cmake') {
     const app = kind === 'app';
-    const selected = await vscode.window.showQuickPick((app ? targets : nativePlatforms).map(target => ({
+    const selected = await vscode.window.showQuickPick(targets.map(target => ({
       label: target,
       description: app && !canBuild(target) ? 'Requires a different build host' : undefined,
-      picked: app && nativePlatforms.includes(target),
+      picked: app && defaultAppPlatforms.includes(target),
       target,
-    })), { canPickMany: true, placeHolder: app ? 'Select application platforms' : 'Select native integration platforms (optional)' });
+    })), { canPickMany: true, placeHolder: app ? 'Select application platforms' : 'Select platform integrations (optional)' });
     if (!selected) {
       return;
     }

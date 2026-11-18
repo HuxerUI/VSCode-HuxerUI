@@ -36,14 +36,14 @@
         </div>
         <label for="create-sdk">SDK</label>
         <select id="create-sdk"><option>Finding SDKs…</option></select>
-        <fieldset id="platform-field">
+        <fieldset id="platform-field" class="platform-options">
           <legend>Target platforms</legend>
           <div id="platforms" class="checks"></div>
         </fieldset>
-        <fieldset id="library-platform-field" aria-describedby="native-platform-help" hidden>
-          <legend>Native integration platforms</legend>
-          <div id="native-platforms" class="checks"></div>
-          <p id="native-platform-help" class="muted">Select only the platforms where your library needs native code.</p>
+        <fieldset id="library-platform-field" class="platform-options" aria-describedby="library-platform-help" hidden>
+          <legend>Platform integrations</legend>
+          <div id="library-platforms" class="checks"></div>
+          <p id="library-platform-help" class="muted">Select only the platforms where your library needs platform-specific code.</p>
         </fieldset>
         <details id="create-advanced">
           <summary>Project options</summary>

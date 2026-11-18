@@ -54,6 +54,7 @@ button:disabled, fieldset:disabled { opacity: .55; cursor: default; }
 .kind input:checked + span { border-color: var(--vscode-focusBorder); color: var(--vscode-textLink-foreground); }
 .kind input:focus-visible + span { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 
+.platform-options { margin-top: 12px; }
 .checks, .setting-pair, .actions, .links {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 105px), 1fr)); gap: 6px;
 }

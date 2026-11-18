@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { ExistingProjectDirectory, generateProject, nativePlatforms, ProjectInput, projectDestination } from './create';
+import { defaultAppPlatforms, ExistingProjectDirectory, generateProject, ProjectInput, projectDestination } from './create';
 import { debugProject } from './debug';
 import { deviceHelp, isMobile, readyDevices } from './devices';
 import { canBuild, hostTarget, inspectProjects, isTarget, Project, targets } from './projects';
@@ -115,7 +115,7 @@ class Sidebar implements vscode.WebviewViewProvider {
       })),
       host: hostTarget,
       platforms: targets,
-      nativePlatforms,
+      defaultAppPlatforms,
       parent: this.parent?.fsPath,
       trusted: vscode.workspace.isTrusted,
     });
