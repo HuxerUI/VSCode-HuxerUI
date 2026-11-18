@@ -1,4 +1,5 @@
 import { ChildProcess, spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { Diagnostics } from './diagnostics';
@@ -41,7 +42,12 @@ export interface Invocation {
   args: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
-  notice?: string;
+}
+
+interface ToolchainTask {
+  project: string;
+  execution?: vscode.TaskExecution;
+  cancelled: boolean;
 }
 
 export function defaultTarget(project: Project): Target | undefined {
@@ -97,11 +103,8 @@ export function invocationFor(project: Project, options: RunOptions, sdk?: Sdk):
   const executable = sdk.cli;
   const env = sdkEnvironment(sdk);
   if (action === 'doctor') {
-    const args = target ? ['doctor', target] : ['doctor'];
-    const notice = sdk.type === 'source'
-      ? 'The selected source checkout is used for builds. Doctor expects an installed SDK and may flag HUXERUI_HOME.'
-      : undefined;
-    return { executable, args, cwd, env, notice };
+    const args = target ? ['doctor', target, '--sdk', sdk.root] : ['doctor', '--sdk', sdk.root];
+    return { executable, args, cwd, env };
   }
   if (!target || !canBuild(target) || !project.platforms.includes(target)) {
     throw new Error('Select a project target supported by this execution host.');
@@ -159,12 +162,9 @@ class CommandTerminal implements vscode.Pseudoterminal {
     }).catch(error => this.fail(error instanceof Error ? error.message : String(error)));
   }
 
-  private start({ executable, args, cwd, env, notice }: Invocation): void {
+  private start({ executable, args, cwd, env }: Invocation): void {
     this.write('Working directory: ' + cwd + '\n');
     this.write('> ' + [executable, ...args].map(arg => /\s/.test(arg) ? JSON.stringify(arg) : arg).join(' ') + '\n');
-    if (notice) {
-      this.write(notice + '\n');
-    }
     // A separate POSIX process group lets Stop signal the CLI and its build tools together.
     const child = spawn(executable, args, {
       cwd, env, detached: process.platform !== 'win32', windowsHide: true,
@@ -268,6 +268,7 @@ class CommandTerminal implements vscode.Pseudoterminal {
 export class HuxerTasks implements vscode.TaskProvider, vscode.Disposable {
   private readonly active = new Map<string, CommandTerminal>();
   private readonly diagnostics = new Diagnostics();
+  private toolchainTask?: ToolchainTask;
 
   constructor(private readonly sdkSelection: SdkSelection) {}
 
@@ -379,12 +380,73 @@ export class HuxerTasks implements vscode.TaskProvider, vscode.Disposable {
     return result;
   }
 
+  async installToolchain(project: Project, invocation: Invocation, target: Target,
+                         confirm: () => Promise<boolean>): Promise<number | undefined> {
+    const key = project.root.toString();
+    if (this.toolchainTask) {
+      throw new Error('Finish the current HuxerUI toolchain installation before starting another.');
+    }
+    if (this.active.has(key)) {
+      throw new Error('Stop the active HuxerUI task before installing tools for this project.');
+    }
+
+    const request: ToolchainTask = { project: key, cancelled: false };
+    this.toolchainTask = request;
+    const subscriptions: vscode.Disposable[] = [];
+    try {
+      if (!await confirm() || request.cancelled) {
+        return undefined;
+      }
+      const id = randomUUID();
+      const { executable, args, cwd, env } = invocation;
+      const environment = Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] =>
+        entry[1] !== undefined));
+      const task = new vscode.Task({ type: 'huxerui-toolchain-setup', id }, project.folder,
+        'Set Up Toolchain (' + target + ')', 'HuxerUI', new vscode.ProcessExecution(executable, args, { cwd, env: environment }));
+      task.presentationOptions = { reveal: vscode.TaskRevealKind.Always, focus: true, panel: vscode.TaskPanelKind.Dedicated };
+
+      const matches = (execution: vscode.TaskExecution) => execution.task.definition.id === id;
+      let started = false;
+      const completed = new Promise<number | undefined>(resolve => {
+        subscriptions.push(vscode.tasks.onDidStartTaskProcess(event => {
+          if (matches(event.execution)) {
+            started = true;
+          }
+        }), vscode.tasks.onDidEndTaskProcess(event => {
+          if (matches(event.execution)) {
+            resolve(event.exitCode);
+          }
+        }), vscode.tasks.onDidEndTask(event => {
+          if (matches(event.execution) && !started) {
+            resolve(undefined);
+          }
+        }));
+      });
+      request.execution = await vscode.tasks.executeTask(task);
+      if (request.cancelled) {
+        request.execution.terminate();
+      }
+      const code = await completed;
+      return request.cancelled ? undefined : code;
+    } finally {
+      for (const subscription of subscriptions) {
+        subscription.dispose();
+      }
+      this.toolchainTask = undefined;
+    }
+  }
+
   runningProjects(): string[] {
-    return Array.from(this.active.keys());
+    const projects = Array.from(this.active.keys());
+    return this.toolchainTask ? [...projects, this.toolchainTask.project] : projects;
   }
 
   stop(project: string): void {
     this.active.get(project)?.close();
+    if (this.toolchainTask?.project === project) {
+      this.toolchainTask.cancelled = true;
+      this.toolchainTask.execution?.terminate();
+    }
   }
 
   private terminal(root: vscode.Uri, prepare: () => Promise<Invocation>, action?: Action,
@@ -393,7 +455,7 @@ export class HuxerTasks implements vscode.TaskProvider, vscode.Disposable {
     const hasBuildOutput = action !== undefined && action !== 'doctor';
     const terminal = new CommandTerminal(
       () => {
-        if (this.active.has(id)) {
+        if (this.active.has(id) || this.toolchainTask?.project === id) {
           return false;
         }
         this.active.set(id, terminal);
@@ -423,8 +485,8 @@ export class HuxerTasks implements vscode.TaskProvider, vscode.Disposable {
   }
 
   dispose(): void {
-    for (const task of this.active.values()) {
-      task.close();
+    for (const project of this.runningProjects()) {
+      this.stop(project);
     }
     this.diagnostics.dispose();
   }

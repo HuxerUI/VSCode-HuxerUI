@@ -49,7 +49,9 @@
     "commands": [
       { "command": "huxerui.create", "title": "HuxerUI: Create Project" },
       { "command": "huxerui.selectSdk", "title": "HuxerUI: Select SDK" },
+      { "command": "huxerui.rebuildSourceCli", "title": "HuxerUI: Rebuild Source CLI" },
       { "command": "huxerui.doctor", "title": "HuxerUI: Diagnose Environment" },
+      { "command": "huxerui.setup", "title": "HuxerUI: Set Up Toolchain" },
       { "command": "huxerui.build", "title": "HuxerUI: Build" },
       { "command": "huxerui.run", "title": "HuxerUI: Run" },
       { "command": "huxerui.debug", "title": "HuxerUI: Debug" },

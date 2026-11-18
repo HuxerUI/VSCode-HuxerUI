@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
 import { isSupportedSdkVersion, runSdkInstaller } from './sdkInstaller';
-import { buildSourceCli, executableName, isSourceCheckout, sourceCheckouts, sourceCliCandidates } from './sourceSdk';
+import { buildSourceCli, cachedSourceCli, executableName, isSourceCheckout, sourceCheckouts, sourceCliCandidates } from './sourceSdk';
 
 const execFileAsync = promisify(execFile);
 
@@ -15,6 +15,7 @@ export interface Sdk {
   cli: string;
   type: 'installed' | 'source';
   version: string;
+  externalCli?: true;
 }
 
 export interface SdkChoice extends vscode.QuickPickItem {
@@ -147,12 +148,15 @@ interface SdkCandidates {
 
 export class SdkSelection implements vscode.Disposable {
   private readonly selectionChanged = new vscode.EventEmitter<void>();
+  private readonly sourceBuilds = new Map<string, PromiseLike<Sdk>>();
+  private buildOutput?: vscode.OutputChannel;
   readonly onDidChangeSelection = this.selectionChanged.event;
 
   constructor(private readonly state: vscode.Memento, private readonly storage: string) {}
 
   dispose(): void {
     this.selectionChanged.dispose();
+    this.buildOutput?.dispose();
   }
 
   private async discover(root: vscode.Uri | undefined, required: string): Promise<SdkCandidates> {
@@ -202,24 +206,56 @@ export class SdkSelection implements vscode.Disposable {
     for (const cli of await sourceCliCandidates(root, this.storage, explicit)) {
       const sdk = await inspectSdk(root, cli);
       if (sdk) {
-        return sdk;
+        return cli === explicit ? { ...sdk, externalCli: true } : sdk;
       }
     }
     return undefined;
   }
 
   private async buildSource(root: string): Promise<Sdk> {
-    return vscode.window.withProgress({
+    const existing = this.sourceBuilds.get(root);
+    if (existing) {
+      return existing;
+    }
+    const build = vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
       title: 'Building the HuxerUI CLI from source',
     }, async () => {
-      const cli = await buildSourceCli(root, this.storage);
-      const sdk = await inspectSdk(root, cli);
-      if (!sdk) {
-        throw new Error('The CLI built from ' + root + ' could not be run on this host.');
+      try {
+        let version = '';
+        const cli = await buildSourceCli(root, this.storage, async file => {
+          const sdk = await inspectSdk(root, file);
+          if (!sdk) {
+            throw new Error('The newly built CLI at ' + file + ' could not be run on this host.');
+          }
+          version = sdk.version;
+        });
+        return { root, cli, type: 'source' as const, version };
+      } catch (error) {
+        const output = this.buildOutput ??= vscode.window.createOutputChannel('HuxerUI Source CLI');
+        const failure = error as { stdout?: string; stderr?: string };
+        output.appendLine('Building the HuxerUI CLI from ' + root);
+        output.appendLine([failure.stdout, failure.stderr].filter(Boolean).join('\n') || String(error));
+        output.show(true);
+        throw new Error('Could not build the HuxerUI CLI. See the HuxerUI Source CLI output.');
       }
-      return sdk;
     });
+    this.sourceBuilds.set(root, build);
+    try {
+      return await build;
+    } finally {
+      this.sourceBuilds.delete(root);
+    }
+  }
+
+  async rebuildSourceCli(root: vscode.Uri): Promise<Sdk> {
+    const selected = await this.resolve(root, false);
+    if (selected?.type !== 'source' || selected.externalCli) {
+      throw new Error('Select a HuxerUI source checkout managed by the extension before rebuilding its CLI.');
+    }
+    const sdk = await this.buildSource(selected.root);
+    this.selectionChanged.fire();
+    return sdk;
   }
 
   private async download(required: string): Promise<Sdk | undefined> {
@@ -269,9 +305,15 @@ export class SdkSelection implements vscode.Disposable {
     const saved = this.state.get<Sdk>(projectKey(root)) ??
       (required || configuredSource ? undefined : this.state.get<Sdk>(projectKey()));
     if (saved) {
-      const sdk = await inspectSdk(saved.root, saved.type === 'source' ? saved.cli : undefined);
+      const source = saved.type === 'source';
+      const explicit = config.get<string>('sourceCli', '');
+      const external = source && (saved.externalCli || (path.isAbsolute(explicit) &&
+        await fs.realpath(explicit).catch(() => undefined) === saved.cli));
+      const cached = source && !external ? cachedSourceCli(saved.root, this.storage) : undefined;
+      const preferred = cached && cached !== saved.cli ? await inspectSdk(saved.root, cached) : undefined;
+      const sdk = preferred ?? await inspectSdk(saved.root, source ? saved.cli : undefined);
       if (sdk && matchVersion(sdk, required)) {
-        return sdk;
+        return external ? { ...sdk, externalCli: true } : sdk;
       }
     }
     const candidates = await this.discover(root, required);
@@ -388,6 +430,9 @@ export class SdkSelection implements vscode.Disposable {
               return undefined;
             }
             sdk = await inspectSdk(checkout, cli.fsPath);
+            if (sdk) {
+              sdk.externalCli = true;
+            }
           } else {
             return undefined;
           }

@@ -71,8 +71,13 @@
       <legend class="sr-only">Project settings</legend>
       <label class="sr-only" for="project">Current project</label>
       <select id="project"></select>
-      <label id="project-sdk-label" for="project-sdk">SDK</label>
-      <select id="project-sdk"><option>Finding SDKs…</option></select>
+      <div id="project-sdk-field">
+        <div class="sdk-heading">
+          <label for="project-sdk">SDK</label>
+          <button id="project-rebuild-cli" class="quiet" type="button" title="Rebuild Source CLI" hidden>Rebuild CLI</button>
+        </div>
+        <select id="project-sdk"><option>Finding SDKs…</option></select>
+      </div>
       <div class="setting-pair">
         <div id="target-field">
           <label for="target">Target</label>
@@ -95,6 +100,7 @@
           <button id="refresh-devices" class="quiet" type="button">Refresh</button>
         </div>
         <p id="device-help" class="muted" hidden></p>
+        <button id="continue-device" type="button" hidden>Continue</button>
       </div>
       <details id="project-advanced">
         <summary>Build options</summary>
@@ -120,6 +126,7 @@
           <button data-action="watch" type="button">Run with Watch</button>
           <button data-action="stop" type="button">Stop Task</button>
           <button data-action="doctor" type="button">Diagnose Environment</button>
+          <button data-action="setup" type="button">Set Up Toolchain</button>
           <button data-action="artifacts" type="button">Open Artifacts</button>
         </div>
       </details>

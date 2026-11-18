@@ -3,14 +3,16 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { defaultAppPlatforms, ExistingProjectDirectory, generateProject, ProjectInput, projectDestination } from './create';
 import { debugProject } from './debug';
-import { deviceHelp, isMobile, readyDevices } from './devices';
+import { deviceHelp, isMobile, MobileTarget, readyDevices } from './devices';
 import { canBuild, hostTarget, inspectProjects, isTarget, Project, targets } from './projects';
 import { Sdk, SdkChoice, SdkSelection } from './sdk';
 import { actions, canRun, defaultTarget, HuxerTasks, isLto, isOptimization, RunOptions } from './tasks';
+import { prepareToolchain, toolchainOperation } from './toolchain';
 
 const viewId = 'huxerui.projects';
 type Message = Record<string, unknown>;
 type Preferences = Omit<RunOptions, 'action' | 'device'> & { devices?: Partial<Record<'android' | 'ios', string>> };
+type MobileOptions = RunOptions & { target: MobileTarget };
 
 function projectId(project: Project): string {
   return project.buildSystem + ':' + project.root.toString();
@@ -39,6 +41,8 @@ class Sidebar implements vscode.WebviewViewProvider {
   private creationSdk?: Sdk;
   private existing?: vscode.Uri;
   private readonly sdkChoices = new Map<string, SdkChoice[]>();
+  private readonly pendingDevices = new Map<string, { sdk: Sdk; options: MobileOptions }>();
+  private readonly starting = new Set<string>();
   private refreshId = 0;
 
   constructor(
@@ -56,6 +60,11 @@ class Sidebar implements vscode.WebviewViewProvider {
       return;
     }
     this.projects = projects;
+    for (const key of this.pendingDevices.keys()) {
+      if (!projects.some(project => projectId(project) === key)) {
+        this.pendingDevices.delete(key);
+      }
+    }
     await vscode.commands.executeCommand('setContext', 'huxerui.hasProject', projects.length > 0);
     await this.sendState();
   }
@@ -69,6 +78,7 @@ class Sidebar implements vscode.WebviewViewProvider {
       if (typeof message === 'object' && message !== null) {
         void this.handle(message).catch(error => {
           void this.post({ type: 'error', area: message.area, message: error instanceof Error ? error.message : String(error),
+            project: message.project, target: message.type === 'action' ? message.target : undefined,
             existing: error instanceof ExistingProjectDirectory });
         });
       }
@@ -110,6 +120,7 @@ class Sidebar implements vscode.WebviewViewProvider {
         buildSystem: project.buildSystem,
         targets: project.platforms.filter(canBuild),
         settings: { ...this.options(project), target: this.options(project).target ?? defaultTarget(project) },
+        pendingDeviceTarget: this.pendingDevices.get(projectId(project))?.options.target,
         actions: actions.filter(action => canRun(project, action)),
         debug: project.buildSystem === 'cmake' && !!hostTarget && project.platforms.includes(hostTarget),
       })),
@@ -164,17 +175,27 @@ class Sidebar implements vscode.WebviewViewProvider {
       return;
     }
     const key = projectId(project);
-    if (message.type === 'selectProject') {
+    if (message.type === 'sdkRebuild' && project.buildSystem === 'cmake') {
+      await this.sdks.rebuildSourceCli(project.root);
+      await this.sdk({ area: 'project' }, project);
+      await this.post({ type: 'projectStatus', project: key, message: 'Source CLI rebuilt.' });
+    } else if (message.type === 'selectProject') {
       await this.context.workspaceState.update('sidebar.project', key);
     } else if (message.type === 'preferences') {
       await this.context.globalState.update('sidebar.options:' + key, preferences(message, project, this.options(project)));
     } else if (message.type === 'devices') {
       const target = preferences(message, project, this.options(project)).target;
       if (isMobile(target)) {
-        const sdk = await this.sdks.resolve(project.root, false).catch(() => undefined);
-        const devices = sdk ? await readyDevices(sdk, project, target) : [];
-        await this.post({ type: 'devices', project: key, target, devices,
-          help: sdk ? deviceHelp(target) : 'Select an SDK to list devices.' });
+        try {
+          const pending = this.pendingDevices.get(key);
+          const sdk = pending?.options.target === target ? pending.sdk : await this.sdks.resolve(project.root, false);
+          const devices = sdk ? await readyDevices(sdk, project, target) : [];
+          await this.post({ type: 'devices', project: key, target, devices,
+            help: sdk ? deviceHelp(target) : 'Select an SDK to list devices.' });
+        } catch {
+          await this.post({ type: 'devices', project: key, target, devices: [],
+            help: 'Device discovery is unavailable. Use Set Up Toolchain to check the environment.' });
+        }
       }
     } else if (message.type === 'action') {
       await this.run(project, message);
@@ -208,6 +229,7 @@ class Sidebar implements vscode.WebviewViewProvider {
       type: 'sdk', area: creating ? 'create' : 'project', project: key, current: current?.root,
       choices: choices.map(choice => ({ label: choice.label, detail: choice.detail, root: choice.sdk?.root })),
       source: current?.type === 'source',
+      rebuildSource: !creating && current?.type === 'source' && !current.externalCli,
     });
   }
 
@@ -253,11 +275,44 @@ class Sidebar implements vscode.WebviewViewProvider {
   }
 
   private async run(project: Project, message: Message): Promise<void> {
+    const key = projectId(project);
     const action = message.action;
+    if (action === 'stop') {
+      const running = this.tasks.runningProjects().includes(project.root.toString());
+      if (!await this.clearPendingDevice(key) && !running) {
+        throw new Error('There is no active task for this project.');
+      }
+      this.tasks.stop(project.root.toString());
+      await this.post({ type: 'projectStatus', project: key, message: 'Task stopped.' });
+      return;
+    }
+    if (this.starting.has(key)) {
+      return;
+    }
+    this.starting.add(key);
+    try {
+      await this.start(project, message);
+    } finally {
+      this.starting.delete(key);
+    }
+  }
+
+  private async start(project: Project, message: Message): Promise<void> {
+    const key = projectId(project);
+    const action = message.action;
+    if (action === 'continueDevice') {
+      const pending = this.pendingDevices.get(key);
+      if (pending && pending.options.target === message.target) {
+        const selected = typeof message.device === 'string' ? message.device : pending.options.device;
+        await this.startOnDevice(project, pending.sdk, pending.options, selected);
+      }
+      return;
+    }
     if (action === 'debug') {
       if (message.target !== hostTarget) {
         throw new Error('Choose the desktop target to debug this project.');
       }
+      await this.clearPendingDevice(key);
       await debugProject(this.sdks, this.tasks, project);
       return;
     }
@@ -265,33 +320,77 @@ class Sidebar implements vscode.WebviewViewProvider {
       await this.openArtifacts(project);
       return;
     }
-    if (action === 'stop') {
-      if (!this.tasks.runningProjects().includes(project.root.toString())) {
-        throw new Error('There is no active task for this project.');
-      }
-      this.tasks.stop(project.root.toString());
-      return;
-    }
-    const taskAction = actions.find(value => value === action);
+    const taskAction = action === 'setup' ? action : actions.find(value => value === action);
     if (!taskAction) {
       return;
     }
     const options = preferences(message, project, this.options(project));
     const target = options.target;
-    const sdk = project.buildSystem === 'cmake' ? await this.sdks.resolve(project.root, false) : undefined;
-    let device: string | undefined;
-    const needsDevice = taskAction === 'run' || taskAction === 'watch';
-    if (sdk && isMobile(target) && (needsDevice || (taskAction !== 'doctor' && options.devices?.[target]))) {
-      const devices = await readyDevices(sdk, project, target);
-      const selected = options.devices?.[target];
-      device = devices.find(item => item.id === selected)?.id ?? (!selected && devices.length === 1 ? devices[0].id : undefined);
-      if (!device) {
-        await this.post({ type: 'devices', project: projectId(project), target, devices, help: deviceHelp(target) });
-        throw new Error(devices.length ? 'Choose an available device.' : deviceHelp(target));
+    const sdk = project.buildSystem === 'cmake' ? await this.sdks.resolve(project.root) : undefined;
+    if (project.buildSystem === 'cmake' && !sdk) {
+      return;
+    }
+    if (taskAction === 'setup') {
+      if (sdk && target && await prepareToolchain(this.tasks, project, sdk, { target, operation: 'run' }, true)) {
+        await this.post({ type: 'projectStatus', project: key, message: 'Toolchain is ready.' });
+        if (isMobile(target)) {
+          const devices = await readyDevices(sdk, project, target);
+          await this.post({ type: 'devices', project: key, target, devices, help: deviceHelp(target) });
+        }
+      }
+      return;
+    }
+    const device = isMobile(target) && taskAction !== 'doctor' ? options.devices?.[target] || undefined : undefined;
+    const runOptions: RunOptions = { ...options, action: taskAction, device };
+    if (sdk && target && taskAction !== 'doctor') {
+      await this.clearPendingDevice(key);
+      const operation = toolchainOperation(taskAction);
+      if (!await prepareToolchain(this.tasks, project, sdk, { target, operation, device })) {
+        return;
+      }
+      if (isMobile(target) && (operation === 'run' || device)) {
+        await this.startOnDevice(project, sdk, { ...runOptions, target }, device);
+        return;
       }
     }
-    await vscode.tasks.executeTask(this.tasks.makeTask(project, { ...options, action: taskAction, device }, { sdk }));
-    await this.post({ type: 'started' });
+    await this.startTask(project, runOptions, sdk);
+  }
+
+  private async startOnDevice(project: Project, sdk: Sdk, options: MobileOptions, selected?: string): Promise<void> {
+    const key = projectId(project);
+    const target = options.target;
+    const pending = this.pendingDevices.get(key);
+    const devices = await readyDevices(sdk, project, target);
+    const device = selected ? devices.find(item => item.id === selected) : devices.length === 1 ? devices[0] : undefined;
+    await this.post({ type: 'devices', project: key, target, devices, help: deviceHelp(target) });
+    if (!device) {
+      this.pendingDevices.set(key, { sdk, options });
+      await this.post({ type: 'deviceAction', project: key, target });
+      await this.post({ type: 'projectStatus', project: key, target,
+        message: devices.length ? 'Choose an available device, then select Continue.' : deviceHelp(target) });
+      return;
+    }
+    if ((pending || device.id !== options.device) && !await prepareToolchain(this.tasks, project, sdk, {
+      target, operation: toolchainOperation(options.action), device: device.id,
+    })) {
+      return;
+    }
+    await this.clearPendingDevice(key);
+    await this.startTask(project, { ...options, device: device.id }, sdk);
+  }
+
+  private async clearPendingDevice(key: string): Promise<boolean> {
+    if (!this.pendingDevices.delete(key)) {
+      return false;
+    }
+    await this.post({ type: 'deviceAction', project: key });
+    return true;
+  }
+
+  private async startTask(project: Project, options: RunOptions, sdk?: Sdk): Promise<void> {
+    await vscode.tasks.executeTask(this.tasks.makeTask(project, options, { sdk }));
+    await this.post({ type: 'projectStatus', project: projectId(project), target: options.target,
+      message: 'Task started. See the terminal for output.' });
   }
 }
 

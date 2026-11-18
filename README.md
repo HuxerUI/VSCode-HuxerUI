@@ -13,6 +13,8 @@ Open **HuxerUI** in the Activity Bar to create an app or library from a form. In
 
 **HuxerUI: Select SDK** can override the choice for a project. The extension looks for a nearby `HuxerUI` checkout and common CMake build directories. For a checkout elsewhere, use **Browse for Source Checkout** or set `huxerui.sourceCheckout` on the execution host. A preferred checkout can build its standalone CLI using the host's CMake and C++ compiler. Set `huxerui.sourceCli` for a CLI built at a custom path.
 
+After updating a source checkout, use **HuxerUI: Rebuild Source CLI** from the Command Palette or **Rebuild CLI** beside the sidebar SDK selector. Run uses the last successful CLI build for that checkout.
+
 The extension uses the toolchain on the workspace host. In a remote window, configure SDK and toolchain paths on that host. With several SDKs installed, use **Select SDK** to bind each project. CMake projects can pin an exact installed SDK with the folder setting `huxerui.sdkVersion`.
 
 **Run with Watch**, **Stop**, **Package**, and **Open Artifacts** are also available for CMake projects. When an ordinary run launches a detached app, close that app through its own UI. mcpp is a preview and uses the host's `mcpp` command and the project's own manifest.

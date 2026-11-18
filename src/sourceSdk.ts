@@ -40,7 +40,7 @@ export async function sourceCheckouts(explicit: string, anchor?: string): Promis
   return Array.from(checkouts);
 }
 
-function cachedCli(root: string, storage: string): string {
+export function cachedSourceCli(root: string, storage: string): string {
   const key = createHash('sha256').update(root).digest('hex').slice(0, 20);
   return path.join(storage, 'source-cli', key, executableName);
 }
@@ -61,12 +61,12 @@ export async function sourceCliCandidates(root: string, storage: string, explici
   const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
   const builds = ['build', 'out', path.join('out', 'huxerui-cli'),
     ...entries.filter(entry => entry.isDirectory() && entry.name.startsWith('cmake-build-')).map(entry => entry.name)];
-  return [explicit, ...builds.flatMap(build => cliOutputs(path.join(root, build))), cachedCli(root, storage)]
+  return [explicit, cachedSourceCli(root, storage), ...builds.flatMap(build => cliOutputs(path.join(root, build)))]
     .filter((file): file is string => Boolean(file));
 }
 
-export async function buildSourceCli(root: string, storage: string): Promise<string> {
-  const destination = cachedCli(root, storage);
+export async function buildSourceCli(root: string, storage: string, verify: (file: string) => Promise<void>): Promise<string> {
+  const destination = cachedSourceCli(root, storage);
   const builds = path.join(storage, 'source-cli');
   await fs.mkdir(builds, { recursive: true });
   const stage = await fs.mkdtemp(path.join(builds, '.build-'));
@@ -80,6 +80,7 @@ export async function buildSourceCli(root: string, storage: string): Promise<str
     await fs.mkdir(path.dirname(destination), { recursive: true });
     for (const file of cliOutputs(stage)) {
       if ((await fs.stat(file).catch(() => undefined))?.isFile()) {
+        await verify(file);
         await fs.rename(file, destination);
         return destination;
       }

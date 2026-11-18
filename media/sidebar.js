@@ -75,6 +75,7 @@ function showMode(load = true) {
   byId('back').hidden = !project;
   if (load) {
     renderCreationOptions();
+    byId('project-rebuild-cli').hidden = true;
     if (creating || project?.buildSystem === 'cmake') {
       send('sdkList');
     }
@@ -93,8 +94,7 @@ function changeMode(next) {
 function renderProject() {
   const cmake = project?.buildSystem === 'cmake';
   byId('target-field').hidden = !cmake || !project.targets.length;
-  byId('project-sdk-label').hidden = !cmake;
-  byId('project-sdk').hidden = !cmake;
+  byId('project-sdk-field').hidden = !cmake;
   byId('project-advanced').hidden = !cmake;
   if (!project) {
     return;
@@ -112,7 +112,8 @@ function renderProject() {
   for (const button of buttons) {
     const action = button.dataset.action;
     button.hidden = !(project.actions.includes(action) ||
-      (action === 'debug' && project.debug) || (action === 'artifacts' && cmake) || action === 'stop');
+      (action === 'debug' && project.debug) || (action === 'artifacts' && cmake) ||
+      (action === 'setup' && cmake && project.targets.length > 0) || action === 'stop');
   }
   updateTargetControls();
   setStatus('project', '');
@@ -120,6 +121,7 @@ function renderProject() {
 
 function updateTargetControls() {
   byId('device-field').hidden = !mobileTarget();
+  byId('continue-device').hidden = !mobileTarget() || project?.pendingDeviceTarget !== value('target');
   document.querySelector('[data-action="debug"]').hidden = !project?.debug || value('target') !== host;
 }
 
@@ -129,7 +131,7 @@ function currentPreferences() {
     configuration: value('configuration'),
     optimization: value('optimization'),
     lto: value('lto'),
-    device: value('device'),
+    device: byId('device').disabled ? project?.settings.devices?.[value('target')] : value('device'),
   };
 }
 
@@ -159,6 +161,7 @@ function refreshDevices() {
   byId('device-field').hidden = !mobile;
   if (mobile) {
     byId('device').replaceChildren(new Option('Loading devices…', ''));
+    byId('device').disabled = true;
     byId('device-help').hidden = true;
     send('devices', { target: value('target') });
   }
@@ -187,8 +190,13 @@ function renderSdk(message) {
   if (message.area === 'create') {
     sourceSdk = message.source;
     renderCreationOptions();
-  } else if (!creating) {
-    refreshDevices();
+  } else {
+    const rebuild = byId('project-rebuild-cli');
+    rebuild.hidden = !message.rebuildSource;
+    rebuild.disabled = false;
+    if (!creating) {
+      refreshDevices();
+    }
   }
 }
 
@@ -229,17 +237,37 @@ window.addEventListener('message', ({ data: message }) => {
     const last = project.settings.devices?.[target];
     const options = devices.map((device) => new Option(device.label, device.id, false, device.id === last));
     options.unshift(new Option(devices.length ? 'Auto' : 'No ready devices', '', !last, !last));
+    if (last && !devices.some(device => device.id === last)) {
+      options.splice(1, 0, new Option('Selected device is unavailable', last, false, true));
+    }
     byId('device').replaceChildren(...options);
+    byId('device').disabled = false;
     byId('device-help').textContent = message.help;
     byId('device-help').hidden = devices.length > 0;
+  } else if (message.type === 'deviceAction') {
+    const owner = projects.find(item => item.id === message.project);
+    if (owner) {
+      owner.pendingDeviceTarget = message.target;
+      if (owner === project) {
+        updateTargetControls();
+      }
+    }
   } else if (message.type === 'error') {
     const area = message.area === 'create' ? 'create' : 'project';
+    if (area === 'project' && ((message.project && message.project !== project?.id) ||
+        (message.target && message.target !== value('target')))) {
+      return;
+    }
     setStatus(area, message.message, true);
     byId(area + '-sdk').disabled = false;
+    if (area === 'project') {
+      byId('project-rebuild-cli').disabled = false;
+    }
     byId('create').disabled = false;
     byId('open-existing').hidden = !message.existing;
-  } else if (message.type === 'started') {
-    setStatus('project', 'Task started. See the terminal for output.');
+  } else if (message.type === 'projectStatus' && message.project === project?.id &&
+      (!message.target || message.target === value('target'))) {
+    setStatus('project', message.message);
   } else if (message.type === 'created') {
     byId('create').disabled = false;
     byId('name').value = '';
@@ -295,11 +323,19 @@ for (const area of ['create', 'project']) {
   select.addEventListener('change', () => {
     if (select.value !== '') {
       select.disabled = true;
+      if (area === 'project') {
+        byId('project-rebuild-cli').disabled = true;
+      }
       setStatus(area, '');
       send('sdkSelect', { area, index: Number(select.value) });
     }
   });
 }
+byId('project-rebuild-cli').addEventListener('click', () => {
+  byId('project-rebuild-cli').disabled = true;
+  setStatus('project', 'Rebuilding the source CLI…');
+  send('sdkRebuild');
+});
 byId('target').addEventListener('change', () => {
   savePreferences(true);
   updateTargetControls();
@@ -312,6 +348,9 @@ for (const id of ['configuration', 'optimization', 'lto', 'device']) {
   });
 }
 byId('refresh-devices').addEventListener('click', refreshDevices);
+byId('continue-device').addEventListener('click', () => {
+  send('action', { ...currentPreferences(), action: 'continueDevice' });
+});
 for (const button of document.querySelectorAll('[data-action]')) {
   button.addEventListener('click', () => {
     setStatus('project', '');

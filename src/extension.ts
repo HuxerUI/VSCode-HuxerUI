@@ -8,6 +8,7 @@ import { BuildSystem, canBuild, hostTarget, isDirectory, isTarget, Project, sele
 import { Sdk, SdkSelection } from './sdk';
 import { registerSidebar } from './sidebar';
 import { Action, actions, canRun, Configuration, defaultTarget, HuxerTasks } from './tasks';
+import { prepareToolchain, toolchainOperation } from './toolchain';
 
 function requireTrust(): void {
   if (!vscode.workspace.isTrusted) {
@@ -32,12 +33,17 @@ async function chooseTarget(project: Project, forDoctor = false): Promise<Target
 }
 
 async function chooseDevice(sdk: Sdk, project: Project, target: MobileTarget): Promise<string | undefined> {
-  const ready = await vscode.window.withProgress({
-    location: vscode.ProgressLocation.Notification,
-    title: 'Finding ' + target + ' devices…',
+  const find = () => vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification, title: 'Finding ' + target + ' devices…',
   }, () => readyDevices(sdk, project, target));
-  if (!ready.length) {
-    throw new Error('No ready ' + target + ' device. ' + deviceHelp(target));
+  let ready = await find();
+  while (!ready.length) {
+    const refresh = await vscode.window.showWarningMessage(
+      'No ready ' + target + ' device. ' + deviceHelp(target), { modal: true }, 'Refresh Devices');
+    if (!refresh) {
+      return undefined;
+    }
+    ready = await find();
   }
   if (ready.length === 1) {
     return ready[0].id;
@@ -52,12 +58,12 @@ async function chooseConfiguration(action: Action): Promise<Configuration | unde
   return selected === 'debug' || selected === 'release' ? selected : undefined;
 }
 
-async function runAction(action: Action, projects: SdkSelection, tasks: HuxerTasks): Promise<void> {
+async function runAction(action: Action | 'setup', projects: SdkSelection, tasks: HuxerTasks): Promise<void> {
   const project = await selectProject();
   if (!project) {
     return;
   }
-  if (!canRun(project, action)) {
+  if ((action === 'setup' && project.buildSystem !== 'cmake') || !canRun(project, action === 'setup' ? 'build' : action)) {
     throw new Error('This action is unavailable for the selected project. Check its enabled targets and build system.');
   }
   const target = project.buildSystem === 'cmake'
@@ -71,14 +77,28 @@ async function runAction(action: Action, projects: SdkSelection, tasks: HuxerTas
   if (project.buildSystem === 'cmake' && !sdk) {
     return;
   }
+  if (action === 'setup') {
+    if (sdk && target && await prepareToolchain(tasks, project, sdk, { target, operation: 'run' }, true)) {
+      void vscode.window.showInformationMessage('The HuxerUI ' + target + ' toolchain is ready.');
+    }
+    return;
+  }
   const configuration = action === 'doctor' ? undefined : await chooseConfiguration(action);
   if (action !== 'doctor' && !configuration) {
+    return;
+  }
+  if (sdk && target && action !== 'doctor' &&
+      !await prepareToolchain(tasks, project, sdk, { target, operation: toolchainOperation(action) })) {
     return;
   }
   const needsDevice = sdk && (target === 'android' || target === 'ios') &&
     (action === 'run' || action === 'watch');
   const device = needsDevice ? await chooseDevice(sdk, project, target) : undefined;
   if (needsDevice && !device) {
+    return;
+  }
+  if (device && sdk && target &&
+      !await prepareToolchain(tasks, project, sdk, { target, operation: 'run', device })) {
     return;
   }
   await vscode.tasks.executeTask(tasks.makeTask(project, { action, target, configuration, device }, { sdk }));
@@ -238,12 +258,22 @@ export function activate(context: vscode.ExtensionContext): void {
   for (const action of actions) {
     command(action, () => runAction(action, sdkSelection, tasks));
   }
+  command('setup', () => runAction('setup', sdkSelection, tasks));
 
   command('selectSdk', async () => {
     const project = vscode.workspace.workspaceFolders?.length ? await selectProject() : undefined;
     const sdk = await sdkSelection.select(project?.root);
     if (sdk) {
       void vscode.window.showInformationMessage('Selected HuxerUI SDK at ' + sdk.root);
+    }
+  });
+  command('rebuildSourceCli', async () => {
+    const project = await selectProject();
+    if (project?.buildSystem === 'cmake') {
+      const sdk = await sdkSelection.rebuildSourceCli(project.root);
+      void vscode.window.showInformationMessage('Rebuilt the HuxerUI CLI from ' + sdk.root + '.');
+    } else if (project) {
+      throw new Error('Select a HuxerUI CMake project to rebuild its source CLI.');
     }
   });
   command('create', () => createProject(sdkSelection, tasks));

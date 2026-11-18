@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import { hostTarget, Project, selectProject } from './projects';
 import { sdkEnvironment, SdkSelection } from './sdk';
 import { HuxerTasks } from './tasks';
+import { prepareToolchain } from './toolchain';
 
 const debuggers = {
   macos: { extension: 'vadimcn.vscode-lldb', name: 'CodeLLDB', type: 'lldb', platform: 'macOS' },
@@ -131,8 +132,8 @@ export async function debugProject(sdkSelection: SdkSelection, tasks: HuxerTasks
   }
   starting.add(key);
   try {
-    const sdk = await sdkSelection.resolve(project.root, !selected);
-    if (!sdk) {
+    const sdk = await sdkSelection.resolve(project.root);
+    if (!sdk || !await prepareToolchain(tasks, project, sdk, { target, operation: 'build' })) {
       return;
     }
     const code = await tasks.buildForDebug(project, sdk, target);

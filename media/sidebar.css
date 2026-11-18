@@ -42,6 +42,9 @@ button:disabled, fieldset:disabled { opacity: .55; cursor: default; }
 
 .inline { display: flex; gap: 5px; align-items: center; }
 .inline :is(input, select) { min-width: 0; }
+.sdk-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0 3px; min-height: 24px; }
+.sdk-heading label { margin: 0; }
+#project-rebuild-cli { min-height: 24px; padding: 0 2px; border: 0; white-space: nowrap; }
 .kind { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .kind label { position: relative; margin: 0; }
 .kind input { position: absolute; inset: 0; width: 100%; margin: 0; opacity: 0; cursor: pointer; }
@@ -69,5 +72,6 @@ summary { cursor: pointer; }
 #create { width: 100%; margin-top: 15px; }
 .muted { color: var(--vscode-descriptionForeground); margin: 5px 0 0; font-size: 11px; }
 .feedback, .notice { margin: 8px 0 0; overflow-wrap: break-word; }
+.feedback { white-space: pre-line; }
 .feedback.error { color: var(--vscode-errorForeground); }
 .notice { margin-bottom: 10px; }
