@@ -21,6 +21,12 @@ The extension uses the toolchain on the workspace host. In a remote window, conf
 
 SDK downloads run the official HuxerUI installer on the workspace host. It verifies the release checksum and sets `HUXERUI_HOME` and `PATH` for new sessions. HuxerUI commands can use the installed SDK immediately. Restart VS Code from the updated environment to pick up the new default in tools such as CMake Tools.
 
+## Edit HuxerUI source
+
+In a CMake or mcpp project, type `[[` or `[[huxerui::` in a C++ file and select `[[huxerui::composable]]` from the suggestions.
+
+In a standard CMake project, press F12 on a resource name such as `app::images::logo`, `app::raw::sample_config_json`, or `app::strings::welcome` to open its source. String references open the key in `resources/strings/default.properties`. Resource navigation works before the generated resource header exists.
+
 ## Debug desktop apps
 
 Use [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) on macOS. On Windows and Linux, enable Microsoft C/C++ from the extension pack on the workspace host. Windows builds use the MSVC build tools. Linux debugging requires an executable `gdb` on the workspace host's `PATH`.

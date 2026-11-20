@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { defaultAppPlatforms, ExistingProjectDirectory, generateProject, isProjectName, ProjectInput, projectDestination, projectIdError } from './create';
 import { debugProject } from './debug';
 import { androidDeviceAbis, Device, deviceHelp, MobileTarget, readyDevices } from './devices';
+import { registerEditorFeatures } from './editor';
 import { registerIntelliSense } from './intellisense';
 import { BuildSystem, canBuild, hostTarget, isDirectory, isTarget, Project, selectProject, Target, targets } from './projects';
 import { Sdk, SdkSelection } from './sdk';
@@ -246,6 +247,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const tasks = new HuxerTasks(sdkSelection);
   context.subscriptions.push(sdkSelection, tasks, vscode.tasks.registerTaskProvider('huxerui', tasks));
   registerIntelliSense(context, sdkSelection);
+  registerEditorFeatures(context);
   registerSidebar(context, sdkSelection, tasks, openArtifacts);
 
   function command(id: string, handler: () => Promise<void>): void {

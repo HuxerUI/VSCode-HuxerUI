@@ -111,10 +111,9 @@ async function chooseProject(projects: Project[]): Promise<Project | undefined> 
   })), { placeHolder: 'Choose a HuxerUI project' }))?.project;
 }
 
-export async function selectProject(): Promise<Project | undefined> {
-  const uri = vscode.window.activeTextEditor?.document.uri;
-  const folder = uri && vscode.workspace.getWorkspaceFolder(uri);
-  if (folder && uri) {
+export async function projectsForFile(uri: vscode.Uri): Promise<Project[]> {
+  const folder = vscode.workspace.getWorkspaceFolder(uri);
+  if (folder) {
     let directory = vscode.Uri.joinPath(uri, '..');
     while (true) {
       // A generated Preview uses the library's SDK selection and task scope.
@@ -125,13 +124,13 @@ export async function selectProject(): Promise<Project | undefined> {
           const project = (await inspectProjects(folder, library))
             .find(candidate => candidate.preview?.toString() === directory.toString());
           if (project) {
-            return project;
+            return [project];
           }
         }
       }
       const projects = await inspectProjects(folder, directory);
       if (projects.length) {
-        return chooseProject(projects);
+        return projects;
       }
       if (directory.path === folder.uri.path) {
         break;
@@ -142,6 +141,15 @@ export async function selectProject(): Promise<Project | undefined> {
       }
       directory = parent;
     }
+  }
+  return [];
+}
+
+export async function selectProject(): Promise<Project | undefined> {
+  const uri = vscode.window.activeTextEditor?.document.uri;
+  const enclosing = uri ? await projectsForFile(uri) : [];
+  if (enclosing.length) {
+    return chooseProject(enclosing);
   }
   const roots = (await Promise.all((vscode.workspace.workspaceFolders ?? []).map(folder =>
     inspectProjects(folder)))).flat();

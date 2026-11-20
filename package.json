@@ -62,6 +62,9 @@
       { "command": "huxerui.package", "title": "HuxerUI: Package" },
       { "command": "huxerui.openArtifacts", "title": "HuxerUI: Open Artifacts" }
     ],
+    "keybindings": [
+      { "command": "huxerui.goToResource", "key": "f12", "when": "editorTextFocus && !isInEmbeddedEditor && huxerui.resourceReference" }
+    ],
     "configuration": {
       "title": "HuxerUI",
       "properties": {
