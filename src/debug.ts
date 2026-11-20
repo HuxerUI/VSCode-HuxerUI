@@ -2,7 +2,10 @@ import { constants } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { hostTarget, Project, selectProject } from './projects';
+import { readAbis } from './abi';
+import { isMobile } from './devices';
+import { mobileDebugProjects, prepareMobileDebug } from './mobileDebug';
+import { canBuild, hostTarget, inspectProjects, isTarget, Project, selectProject, Target } from './projects';
 import { sdkEnvironment, SdkSelection } from './sdk';
 import { HuxerTasks } from './tasks';
 import { prepareToolchain } from './toolchain';
@@ -13,8 +16,19 @@ const debuggers = {
   linux: { extension: 'ms-vscode.cpptools', name: 'Microsoft C/C++', type: 'cppdbg', platform: 'Linux' },
 };
 type DebugTarget = keyof typeof debuggers;
+type DeviceOptions = { device?: string; abis?: string[] };
+
+const debugType = 'huxerui';
+const targetLabels: Record<Target, string> = {
+  windows: 'Windows', macos: 'macOS', linux: 'Linux', android: 'Android', ios: 'iOS Simulator', web: 'Web',
+};
 
 const starting = new Set<string>();
+
+export function debugTargets(project: Project): Target[] {
+  return project.buildSystem === 'cmake' ? project.platforms.filter(target =>
+    target === hostTarget || (isMobile(target) && canBuild(target))) : [];
+}
 
 function cacheValue(cache: string, key: string): string | undefined {
   return new RegExp('^' + key + ':[^=]+=(.*)$', 'm').exec(cache)?.[1];
@@ -99,19 +113,35 @@ async function findDebugApp(projectRoot: string, sdkRoot: string, target: DebugT
   return { program, name, sourceDirectory, realProjectRoot };
 }
 
-export async function debugProject(sdkSelection: SdkSelection, tasks: HuxerTasks, selected?: Project): Promise<void> {
-  const target = hostTarget;
-  if (target !== 'macos' && target !== 'windows' && target !== 'linux') {
-    throw new Error('HuxerUI desktop debugging is currently available on macOS, Windows, and Linux.');
-  }
+function launchConfiguration(target: Target): vscode.DebugConfiguration {
+  return { type: debugType, request: 'launch', name: 'HuxerUI: ' + targetLabels[target], target };
+}
+
+export async function debugProject(selected?: Project, options: DeviceOptions & { target?: Target } = {}): Promise<void> {
   const project = selected ?? await selectProject();
   if (!project) {
     return;
   }
-  const adapter = debuggers[target];
-  if (project.buildSystem !== 'cmake' || !project.platforms.includes(target)) {
-    throw new Error('Choose a HuxerUI CMake application or Library Preview with ' + adapter.platform + ' enabled.');
+  const targets = debugTargets(project);
+  if (!targets.length || (options.target && !targets.includes(options.target))) {
+    throw new Error('Choose a HuxerUI CMake application or Library Preview with a debug target supported on this host.');
   }
+  const order = hostTarget && targets.includes(hostTarget) ? [hostTarget, ...targets.filter(item => item !== hostTarget)] : targets;
+  const target = options.target ?? (order.length > 1 ? (await vscode.window.showQuickPick(order.map(item => ({ label: targetLabels[item], target: item })), {
+    placeHolder: 'Choose a HuxerUI debug target',
+  }))?.target : order[0]);
+  if (target) {
+    await vscode.debug.startDebugging(project.folder, { ...launchConfiguration(target),
+      project: path.relative(project.folder.uri.fsPath, project.root.fsPath).split(path.sep).join('/'),
+      device: options.device, abis: options.abis,
+    });
+  }
+}
+
+async function prepareDebug(sdkSelection: SdkSelection, tasks: HuxerTasks, project: Project,
+                            target: Exclude<Target, 'web'>, options: DeviceOptions & { args?: string[] },
+                            token?: vscode.CancellationToken): Promise<vscode.DebugConfiguration | undefined> {
+  const adapter = isMobile(target) ? debuggers.macos : debuggers[target];
   if (!vscode.extensions.getExtension(adapter.extension)) {
     const action = await vscode.window.showErrorMessage(
       'Install and enable ' + adapter.name + ' on the workspace host to debug HuxerUI.', 'Open Extension');
@@ -127,16 +157,27 @@ export async function debugProject(sdkSelection: SdkSelection, tasks: HuxerTasks
   }
 
   const key = project.root.toString();
-  if (starting.has(key)) {
-    throw new Error('A HuxerUI debug launch is already starting for this project.');
+  if (starting.has(key) || mobileDebugProjects().includes(key)) {
+    throw new Error('Stop the active HuxerUI debug launch for this project first.');
   }
   starting.add(key);
   try {
     const sdk = await sdkSelection.resolve(project.root);
-    if (!sdk || !await prepareToolchain(tasks, project, sdk, { target, operation: 'build' })) {
+    if (!sdk || token?.isCancellationRequested) {
       return;
     }
-    const code = await tasks.buildForDebug(project, sdk, target);
+    if (isMobile(target)) {
+      return await prepareMobileDebug(project, sdk, tasks, target, options, token);
+    }
+    if (!await prepareToolchain(tasks, project, sdk, { target, operation: 'build' }) || token?.isCancellationRequested) {
+      return;
+    }
+    const controller = new AbortController();
+    const cancellation = token?.onCancellationRequested(() => controller.abort());
+    const code = await tasks.buildForDebug(project, sdk, target, {}, controller.signal).finally(() => cancellation?.dispose());
+    if (token?.isCancellationRequested) {
+      return;
+    }
     if (code !== 0) {
       throw new Error('The HuxerUI Debug build did not complete. See the task terminal for details.');
     }
@@ -152,8 +193,9 @@ export async function debugProject(sdkSelection: SdkSelection, tasks: HuxerTasks
       type: adapter.type,
       request: 'launch',
       program: app.program,
+      args: options.args,
     };
-    const configuration = target === 'macos' ? {
+    return target === 'macos' ? {
       ...base,
       cwd: projectDirectory,
       env: Object.fromEntries(environment.map(({ name, value }) => [name, value])),
@@ -166,11 +208,63 @@ export async function debugProject(sdkSelection: SdkSelection, tasks: HuxerTasks
       sourceFileMap: sourceMap,
       ...(gdb ? { MIMode: 'gdb', miDebuggerPath: gdb, externalConsole: false } : {}),
     };
-    const launched = await vscode.debug.startDebugging(project.folder, configuration);
-    if (!launched) {
-      throw new Error(adapter.name + ' could not start the HuxerUI application.');
-    }
   } finally {
     starting.delete(key);
   }
+}
+
+export function registerDebugConfigurations(context: vscode.ExtensionContext, sdkSelection: SdkSelection, tasks: HuxerTasks,
+                                            preferences: (project: Project, target: Target) => DeviceOptions): void {
+  context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider(debugType, {
+    async provideDebugConfigurations(folder, token) {
+      if (!folder || !vscode.workspace.isTrusted || token?.isCancellationRequested) {
+        return [];
+      }
+      const project = (await inspectProjects(folder)).find(project => project.buildSystem === 'cmake');
+      return project ? debugTargets(project).map(launchConfiguration) : [];
+    },
+    async resolveDebugConfiguration(folder, config, token) {
+      try {
+        if (!vscode.workspace.isTrusted) {
+          throw new Error('Trust this workspace before debugging a HuxerUI project.');
+        }
+        if (!folder) {
+          throw new Error('Open a HuxerUI project folder to start debugging.');
+        }
+        const relative = config.project ?? '';
+        if (typeof relative !== 'string' || path.isAbsolute(relative) || relative.split(/[\\/]/).includes('..')) {
+          throw new Error('The HuxerUI debug project must be relative to its workspace folder.');
+        }
+        const root = vscode.Uri.joinPath(folder.uri, relative);
+        const project = (await inspectProjects(folder, root)).find(project => project.buildSystem === 'cmake');
+        const available = project ? debugTargets(project) : [];
+        const target = config.target ?? available.find(item => item === hostTarget) ??
+          (available.length === 1 ? available[0] : undefined);
+        if (!project || !isTarget(target) || target === 'web' || !available.includes(target)) {
+          throw new Error('Choose a HuxerUI CMake application or Library Preview with a debug target supported on this host.');
+        }
+        if (config.noDebug) {
+          throw new Error('Use HuxerUI: Run to launch without the debugger.');
+        }
+        if (config.args !== undefined && (isMobile(target) || !Array.isArray(config.args) ||
+            config.args.some((arg: unknown) => typeof arg !== 'string'))) {
+          throw new Error('HuxerUI debug launch arguments must be an array of strings for a desktop target.');
+        }
+        const abis = readAbis(target, config.abis);
+        if (config.abis !== undefined && (!abis || !isMobile(target))) {
+          throw new Error('Choose valid ABIs for the HuxerUI mobile debug target.');
+        }
+        const defaults = preferences(project, target);
+        const prepared = await prepareDebug(sdkSelection, tasks, project, target, {
+          device: config.device ?? defaults.device, abis: abis ?? defaults.abis, args: config.args,
+        }, token);
+        return prepared ? { ...prepared, name: config.name } : undefined;
+      } catch (error) {
+        if (!token?.isCancellationRequested) {
+          void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+        }
+        return undefined;
+      }
+    },
+  }, vscode.DebugConfigurationProviderTriggerKind.Dynamic));
 }

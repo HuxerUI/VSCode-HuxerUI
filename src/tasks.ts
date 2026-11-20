@@ -391,22 +391,37 @@ export class HuxerTasks implements vscode.TaskProvider, vscode.Disposable {
       new vscode.CustomExecution(async () => this.terminal(root, async () => invocation, undefined, completed))));
   }
 
-  async buildForDebug(project: Project, sdk: Sdk, target: Target): Promise<number> {
+  async buildForDebug(project: Project, sdk: Sdk, target: Target,
+                      options: Pick<RunOptions, 'device' | 'abis' | 'lto'> = {}, signal?: AbortSignal): Promise<number> {
+    const android = target === 'android';
     return this.executeAndWait(completed => this.makeTask(
-      project, { action: 'build', target, configuration: 'debug' }, {
+      project, { ...options, action: android ? 'run' : 'build', target, configuration: 'debug' }, {
         sdk,
         definition: { type: 'huxerui-debug-build', project: project.root.toString() },
-        name: 'Build for Debugging (' + target + ')',
+        name: (android ? 'Build and Deploy for Debugging' : 'Build for Debugging') + ' (' + target + ')',
         completed,
       },
-    ));
+    ), signal);
   }
 
-  private async executeAndWait(makeTask: (completed: (code: number) => void) => vscode.Task): Promise<number> {
+  private async executeAndWait(makeTask: (completed: (code: number) => void) => vscode.Task,
+                               signal?: AbortSignal): Promise<number> {
+    if (signal?.aborted) {
+      return 130;
+    }
     let completed: (code: number) => void = () => {};
     const result = new Promise<number>(resolve => { completed = resolve; });
-    await vscode.tasks.executeTask(makeTask(completed));
-    return result;
+    const execution = await vscode.tasks.executeTask(makeTask(completed));
+    const cancel = () => execution.terminate();
+    signal?.addEventListener('abort', cancel, { once: true });
+    if (signal?.aborted) {
+      cancel();
+    }
+    try {
+      return await result;
+    } finally {
+      signal?.removeEventListener('abort', cancel);
+    }
   }
 
   async installToolchain(project: Project, invocation: Invocation, target: Target,

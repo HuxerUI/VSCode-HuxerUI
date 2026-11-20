@@ -27,13 +27,30 @@ In a CMake or mcpp project, type `[[` or `[[huxerui::` in a C++ file and select 
 
 In a standard CMake project, press F12 on a resource name such as `app::images::logo`, `app::raw::sample_config_json`, or `app::strings::welcome` to open its source. String references open the key in `resources/strings/default.properties`. Resource navigation works before the generated resource header exists.
 
-## Debug desktop apps
+## Debug with VS Code
+
+Open **Run and Debug**, choose **HuxerUI…** in the configuration picker, and select a target. You can also open the picker with **Debug: Select and Start Debugging**. VS Code lists supported targets for each open HuxerUI CMake app or Library Preview. After selecting a target, use **F5** to start and **Shift+F5** to stop. The sidebar **Debug** button and **HuxerUI: Debug** run the same build and launch flow.
+
+The dynamic configurations work without `launch.json`. To share a configuration, select **HuxerUI: Launch** from the **Add Configuration** snippets and set `target` to the desired platform. Desktop configurations can also set `args`. The extension reads the project's SDK and the sidebar's mobile device and ABI preferences each time it starts a session.
+
+### Desktop apps
 
 Use [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) on macOS. On Windows and Linux, enable Microsoft C/C++ from the extension pack on the workspace host. Windows builds use the MSVC build tools. Linux debugging requires an executable `gdb` on the workspace host's `PATH`.
 
-Open a CMake application or Library Preview with the host platform enabled, set a source breakpoint, and run **HuxerUI: Debug**. The command builds with the selected SDK in Debug mode and launches the app executable from the CMake integration plan.
+Set a source breakpoint and start the host's desktop target. HuxerUI builds in Debug mode with the selected SDK and launches the app executable from the CMake integration plan.
 
 For composable functions, set a line breakpoint inside the handwritten body. The current generator can assign the same line to the first statement and its generated `Scope` wrapper. In that case, Step Over can return to the handwritten caller. A breakpoint on the next executable statement lets you step inside the body.
+
+### Android and iOS apps
+
+Install CodeLLDB on the workspace host. Select Android or iOS Simulator in **Run and Debug**, or choose a target in the HuxerUI sidebar. If a saved device is unavailable, select a device from the picker. Mobile sessions use the selected SDK in Debug mode with LTO disabled.
+
+- Android uses ADB and the project's Android NDK. The selected device must support `run-as`. Debug builds for one compatible ABI and attaches after launching the APK, so set a breakpoint in C++ code that you can trigger after launch.
+- iOS debugging on macOS uses a booted Xcode simulator. Set breakpoints before launching so CodeLLDB can attach before the app starts running. If a source SDK build reports duplicate archive members in `dsymutil` and breakpoints stay unverified, select an installed SDK and retry.
+
+On Android, **Restart** in the debugger toolbar relaunches the deployed Debug APK and reconnects. Stop and start a new debug session to build and deploy source changes.
+
+Use the debugger toolbar or **HuxerUI: Stop** to end the session.
 
 ## Install a local build
 

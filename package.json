@@ -2,15 +2,26 @@
   "name": "huxerui",
   "displayName": "HuxerUI",
   "description": "Create, build, and run HuxerUI projects in Visual Studio Code.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "huxerui",
   "icon": "media/huxerui.png",
   "license": "MIT",
   "engines": {
     "vscode": "^1.96.0"
   },
-  "categories": ["Programming Languages", "Other", "Extension Packs"],
-  "keywords": ["huxerui", "C++", "CMake", "UI framework", "declarative UI", "cross-platform"],
+  "categories": [
+    "Programming Languages",
+    "Other",
+    "Extension Packs"
+  ],
+  "keywords": [
+    "huxerui",
+    "C++",
+    "CMake",
+    "UI framework",
+    "declarative UI",
+    "cross-platform"
+  ],
   "main": "./out/extension.js",
   "files": [
     "out/**/*.js",
@@ -23,9 +34,13 @@
     "ms-vscode.cpptools",
     "ms-vscode.cmake-tools"
   ],
-  "extensionKind": ["workspace"],
+  "extensionKind": [
+    "workspace"
+  ],
   "activationEvents": [
     "onStartupFinished",
+    "onDebugDynamicConfigurations:huxerui",
+    "onDebugResolve:huxerui",
     "onTaskType:huxerui",
     "workspaceContains:HuxerUIProject.cmake",
     "workspaceContains:mcpp.toml"
@@ -38,32 +53,135 @@
     "virtualWorkspaces": false
   },
   "contributes": {
+    "debuggers": [
+      {
+        "type": "huxerui",
+        "label": "HuxerUI",
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "target": {
+                "type": "string",
+                "enum": [
+                  "windows",
+                  "macos",
+                  "linux",
+                  "android",
+                  "ios"
+                ],
+                "description": "HuxerUI target. Defaults to the host's desktop target or the project's only supported debug target."
+              },
+              "project": {
+                "type": "string",
+                "description": "HuxerUI project directory relative to this workspace folder."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Arguments passed to a desktop application."
+              },
+              "abis": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "description": "Optional Android or iOS simulator ABIs. Omit to use the sidebar preference."
+              }
+            }
+          }
+        },
+        "configurationSnippets": [
+          {
+            "label": "HuxerUI: Launch",
+            "description": "Build and debug a HuxerUI application or Library Preview.",
+            "body": {
+              "type": "huxerui",
+              "request": "launch",
+              "name": "HuxerUI"
+            }
+          }
+        ]
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
-        { "id": "huxerui", "title": "HuxerUI", "icon": "media/huxerui.svg" }
+        {
+          "id": "huxerui",
+          "title": "HuxerUI",
+          "icon": "media/huxerui.svg"
+        }
       ]
     },
     "views": {
       "huxerui": [
-        { "id": "huxerui.projects", "name": "HuxerUI", "type": "webview", "icon": "media/huxerui.svg", "when": "workspaceFolderCount == 0 || huxerui.hasProject" }
+        {
+          "id": "huxerui.projects",
+          "name": "HuxerUI",
+          "type": "webview",
+          "icon": "media/huxerui.svg",
+          "when": "workspaceFolderCount == 0 || huxerui.hasProject"
+        }
       ]
     },
     "commands": [
-      { "command": "huxerui.create", "title": "HuxerUI: Create Project" },
-      { "command": "huxerui.selectSdk", "title": "HuxerUI: Select SDK" },
-      { "command": "huxerui.rebuildSourceCli", "title": "HuxerUI: Rebuild Source CLI" },
-      { "command": "huxerui.doctor", "title": "HuxerUI: Diagnose Environment" },
-      { "command": "huxerui.setup", "title": "HuxerUI: Set Up Toolchain" },
-      { "command": "huxerui.build", "title": "HuxerUI: Build" },
-      { "command": "huxerui.run", "title": "HuxerUI: Run" },
-      { "command": "huxerui.debug", "title": "HuxerUI: Debug" },
-      { "command": "huxerui.watch", "title": "HuxerUI: Run with Watch" },
-      { "command": "huxerui.stop", "title": "HuxerUI: Stop" },
-      { "command": "huxerui.package", "title": "HuxerUI: Package" },
-      { "command": "huxerui.openArtifacts", "title": "HuxerUI: Open Artifacts" }
+      {
+        "command": "huxerui.create",
+        "title": "HuxerUI: Create Project"
+      },
+      {
+        "command": "huxerui.selectSdk",
+        "title": "HuxerUI: Select SDK"
+      },
+      {
+        "command": "huxerui.rebuildSourceCli",
+        "title": "HuxerUI: Rebuild Source CLI"
+      },
+      {
+        "command": "huxerui.doctor",
+        "title": "HuxerUI: Diagnose Environment"
+      },
+      {
+        "command": "huxerui.setup",
+        "title": "HuxerUI: Set Up Toolchain"
+      },
+      {
+        "command": "huxerui.build",
+        "title": "HuxerUI: Build"
+      },
+      {
+        "command": "huxerui.run",
+        "title": "HuxerUI: Run"
+      },
+      {
+        "command": "huxerui.debug",
+        "title": "HuxerUI: Debug"
+      },
+      {
+        "command": "huxerui.watch",
+        "title": "HuxerUI: Run with Watch"
+      },
+      {
+        "command": "huxerui.stop",
+        "title": "HuxerUI: Stop"
+      },
+      {
+        "command": "huxerui.package",
+        "title": "HuxerUI: Package"
+      },
+      {
+        "command": "huxerui.openArtifacts",
+        "title": "HuxerUI: Open Artifacts"
+      }
     ],
     "keybindings": [
-      { "command": "huxerui.goToResource", "key": "f12", "when": "editorTextFocus && !isInEmbeddedEditor && huxerui.resourceReference" }
+      {
+        "command": "huxerui.goToResource",
+        "key": "f12",
+        "when": "editorTextFocus && !isInEmbeddedEditor && huxerui.resourceReference"
+      }
     ],
     "configuration": {
       "title": "HuxerUI",
@@ -76,7 +194,9 @@
         },
         "huxerui.sdkPaths": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "scope": "machine",
           "description": "Additional installed SDK roots on the execution host."
@@ -98,11 +218,19 @@
     "taskDefinitions": [
       {
         "type": "huxerui",
-        "required": ["action"],
+        "required": [
+          "action"
+        ],
         "properties": {
           "action": {
             "type": "string",
-            "enum": ["doctor", "build", "run", "watch", "package"],
+            "enum": [
+              "doctor",
+              "build",
+              "run",
+              "watch",
+              "package"
+            ],
             "description": "Operation to run."
           },
           "project": {
@@ -111,17 +239,30 @@
           },
           "buildSystem": {
             "type": "string",
-            "enum": ["cmake", "mcpp"],
+            "enum": [
+              "cmake",
+              "mcpp"
+            ],
             "description": "Build system for a directory containing both types of project."
           },
           "target": {
             "type": "string",
-            "enum": ["windows", "macos", "linux", "android", "ios", "web"],
+            "enum": [
+              "windows",
+              "macos",
+              "linux",
+              "android",
+              "ios",
+              "web"
+            ],
             "description": "CMake target. Defaults to the execution host when possible."
           },
           "configuration": {
             "type": "string",
-            "enum": ["debug", "release"],
+            "enum": [
+              "debug",
+              "release"
+            ],
             "description": "Build configuration. Package defaults to release."
           },
           "device": {
@@ -130,18 +271,27 @@
           },
           "abis": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "minItems": 1,
             "description": "Optional list of canonical ABIs for this CMake target."
           },
           "optimization": {
             "type": "string",
-            "enum": ["default", "size", "minsize"],
+            "enum": [
+              "default",
+              "size",
+              "minsize"
+            ],
             "description": "Optional CMake build size optimization."
           },
           "lto": {
             "type": "string",
-            "enum": ["on", "off"],
+            "enum": [
+              "on",
+              "off"
+            ],
             "description": "Optional CMake link-time optimization override."
           }
         }

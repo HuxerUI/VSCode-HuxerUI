@@ -3,9 +3,10 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { readAbis, selectableAbis } from './abi';
 import { defaultAppPlatforms, ExistingProjectDirectory, generateProject, ProjectInput, projectDestination } from './create';
-import { debugProject } from './debug';
+import { debugProject, debugTargets } from './debug';
 import { androidDeviceAbis, deviceHelp, isMobile, MobileTarget, readyDevices } from './devices';
-import { canBuild, hostTarget, inspectProjects, isTarget, Project, Target, targets } from './projects';
+import { mobileDebugProjects, stopMobileDebug } from './mobileDebug';
+import { canBuild, inspectProjects, isTarget, Project, Target, targets } from './projects';
 import { Sdk, SdkChoice, SdkSelection } from './sdk';
 import { actions, canRun, defaultTarget, HuxerTasks, isLto, isOptimization, RunOptions } from './tasks';
 import { prepareToolchain, toolchainOperation } from './toolchain';
@@ -20,6 +21,18 @@ type MobileOptions = RunOptions & { target: MobileTarget; followDevice?: boolean
 
 function projectId(project: Project): string {
   return project.buildSystem + ':' + project.root.toString();
+}
+
+function readPreferences(state: vscode.Memento, project: Project): Preferences {
+  return state.get<Preferences>('sidebar.options:' + projectId(project), {});
+}
+
+export function sidebarDebugOptions(state: vscode.Memento, project: Project, target: Target): { device?: string; abis?: string[] } {
+  if (!isMobile(target)) {
+    return {};
+  }
+  const options = readPreferences(state, project);
+  return { device: options.devices?.[target] || undefined, abis: readAbis(target, options.abiByTarget?.[target]?.split(',')) };
 }
 
 function preferences(message: Message, project: Project, previous: Preferences): Preferences {
@@ -112,7 +125,7 @@ class Sidebar implements vscode.WebviewViewProvider {
   }
 
   private options(project: Project): Preferences {
-    return this.context.globalState.get<Preferences>('sidebar.options:' + projectId(project), {});
+    return readPreferences(this.context.globalState, project);
   }
 
   private async sendState(): Promise<void> {
@@ -132,9 +145,8 @@ class Sidebar implements vscode.WebviewViewProvider {
         settings: { ...this.options(project), target: this.options(project).target ?? defaultTarget(project) },
         pendingDeviceTarget: this.pendingDevices.get(projectId(project))?.options.target,
         actions: actions.filter(action => canRun(project, action)),
-        debug: project.buildSystem === 'cmake' && !!hostTarget && project.platforms.includes(hostTarget),
+        debugTargets: debugTargets(project),
       })),
-      host: hostTarget,
       platforms: targets,
       defaultAppPlatforms,
       parent: this.parent?.fsPath,
@@ -289,12 +301,15 @@ class Sidebar implements vscode.WebviewViewProvider {
     const key = projectId(project);
     const action = message.action;
     if (action === 'stop') {
-      const running = this.tasks.runningProjects().includes(project.root.toString());
-      if (!await this.clearPendingDevice(key) && !running) {
+      const root = project.root.toString();
+      const debugging = mobileDebugProjects().includes(root);
+      const running = this.tasks.runningProjects().includes(root);
+      if (!await this.clearPendingDevice(key) && !running && !debugging) {
         throw new Error('There is no active task for this project.');
       }
-      this.tasks.stop(project.root.toString());
-      await this.post({ type: 'projectStatus', project: key, message: 'Task stopped.' });
+      this.tasks.stop(root);
+      await stopMobileDebug(root);
+      await this.post({ type: 'projectStatus', project: key, message: debugging ? 'Debug stop requested.' : 'Task stopped.' });
       return;
     }
     if (this.starting.has(key)) {
@@ -334,11 +349,16 @@ class Sidebar implements vscode.WebviewViewProvider {
       return;
     }
     if (action === 'debug') {
-      if (message.target !== hostTarget) {
-        throw new Error('Choose the desktop target to debug this project.');
+      const options = preferences(message, project, this.options(project));
+      const target = options.target;
+      if (!target || !debugTargets(project).includes(target)) {
+        throw new Error('Choose a supported debug target.');
       }
       await this.clearPendingDevice(key);
-      await debugProject(this.sdks, this.tasks, project);
+      await debugProject(project, { target,
+        device: isMobile(target) ? options.devices?.[target] || undefined : undefined,
+        abis: isMobile(target) ? readAbis(target, options.abiByTarget?.[target]?.split(',')) : undefined,
+      });
       return;
     }
     if (action === 'artifacts') {

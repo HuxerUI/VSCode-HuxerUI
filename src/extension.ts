@@ -1,13 +1,14 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { defaultAppPlatforms, ExistingProjectDirectory, generateProject, isProjectName, ProjectInput, projectDestination, projectIdError } from './create';
-import { debugProject } from './debug';
+import { debugProject, registerDebugConfigurations } from './debug';
 import { androidDeviceAbis, Device, deviceHelp, MobileTarget, readyDevices } from './devices';
 import { registerEditorFeatures } from './editor';
 import { registerIntelliSense } from './intellisense';
+import { disposeMobileDebug, mobileDebugProjects, registerMobileDebug, stopMobileDebug } from './mobileDebug';
 import { BuildSystem, canBuild, hostTarget, isDirectory, isTarget, Project, selectProject, Target, targets } from './projects';
 import { Sdk, SdkSelection } from './sdk';
-import { registerSidebar } from './sidebar';
+import { registerSidebar, sidebarDebugOptions } from './sidebar';
 import { Action, actions, canRun, Configuration, defaultTarget, HuxerTasks } from './tasks';
 import { prepareToolchain, toolchainOperation } from './toolchain';
 
@@ -227,18 +228,19 @@ async function openArtifacts(selected?: Project): Promise<void> {
 }
 
 async function stopTask(tasks: HuxerTasks): Promise<void> {
-  const running = tasks.runningProjects();
+  const running = [...new Set([...tasks.runningProjects(), ...mobileDebugProjects()])];
   if (!running.length) {
-    void vscode.window.showInformationMessage('There are no active HuxerUI tasks.');
+    void vscode.window.showInformationMessage('There are no active HuxerUI tasks or debug sessions.');
     return;
   }
   const selection = running.length === 1 ? running[0] : (await vscode.window.showQuickPick(running.map(id => ({
     label: path.basename(vscode.Uri.parse(id).fsPath),
     detail: vscode.Uri.parse(id).fsPath,
     id,
-  })), { placeHolder: 'Choose the HuxerUI task to stop' }))?.id;
+  })), { placeHolder: 'Choose the HuxerUI project to stop' }))?.id;
   if (selection) {
     tasks.stop(selection);
+    await stopMobileDebug(selection);
   }
 }
 
@@ -248,6 +250,9 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(sdkSelection, tasks, vscode.tasks.registerTaskProvider('huxerui', tasks));
   registerIntelliSense(context, sdkSelection);
   registerEditorFeatures(context);
+  registerMobileDebug(context);
+  registerDebugConfigurations(context, sdkSelection, tasks, (project, target) =>
+    sidebarDebugOptions(context.globalState, project, target));
   registerSidebar(context, sdkSelection, tasks, openArtifacts);
 
   function command(id: string, handler: () => Promise<void>): void {
@@ -283,7 +288,11 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
   command('create', () => createProject(sdkSelection, tasks));
-  command('debug', () => debugProject(sdkSelection, tasks));
+  command('debug', () => debugProject());
   command('stop', () => stopTask(tasks));
   command('openArtifacts', openArtifacts);
+}
+
+export async function deactivate(): Promise<void> {
+  await disposeMobileDebug();
 }

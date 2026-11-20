@@ -6,7 +6,6 @@ const platformNames = { windows: 'Windows', macos: 'macOS', linux: 'Linux', andr
 const draft = vscode.getState();
 let projects = [];
 let project;
-let host;
 let creating = draft?.creating;
 let sourceSdk = false;
 let statusReady = false;
@@ -114,7 +113,7 @@ function renderProject() {
   for (const button of buttons) {
     const action = button.dataset.action;
     button.hidden = !(project.actions.includes(action) ||
-      (action === 'debug' && project.debug) || (action === 'artifacts' && cmake) ||
+      (action === 'debug' && project.debugTargets.length > 0) || (action === 'artifacts' && cmake) ||
       (action === 'setup' && cmake && project.targets.length > 0) || action === 'stop');
   }
   updateTargetControls();
@@ -124,7 +123,7 @@ function renderProject() {
 function updateTargetControls() {
   byId('device-field').hidden = !mobileTarget();
   byId('continue-device').hidden = !mobileTarget() || project?.pendingDeviceTarget !== value('target');
-  document.querySelector('[data-action="debug"]').hidden = !project?.debug || value('target') !== host;
+  document.querySelector('[data-action="debug"]').hidden = !project?.debugTargets.includes(value('target'));
   renderAbi();
 }
 
@@ -249,7 +248,6 @@ function renderSdk(message) {
 window.addEventListener('message', ({ data: message }) => {
   if (message.type === 'state') {
     const previous = project?.id;
-    host = message.host;
     projects = message.projects;
     project = projects.find((item) => item.id === message.project) ?? projects[0];
     creating = project ? creating ?? false : true;
