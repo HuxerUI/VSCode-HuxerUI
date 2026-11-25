@@ -404,6 +404,18 @@ export class HuxerTasks implements vscode.TaskProvider, vscode.Disposable {
     ), signal);
   }
 
+  async buildForPreview(project: Project, invocation: Invocation, signal: AbortSignal): Promise<number> {
+    return this.executeAndWait(completed => {
+      const task = new vscode.Task({ type: 'huxerui-preview-build', project: project.root.toString() },
+        project.folder, 'Build Web Preview', 'HuxerUI', new vscode.CustomExecution(async () =>
+          this.terminal(project.root, async () => invocation, 'build', completed, project.preview)));
+      task.presentationOptions = {
+        reveal: vscode.TaskRevealKind.Silent, focus: false, panel: vscode.TaskPanelKind.Dedicated,
+      };
+      return task;
+    }, signal);
+  }
+
   private async executeAndWait(makeTask: (completed: (code: number) => void) => vscode.Task,
                                signal?: AbortSignal): Promise<number> {
     if (signal?.aborted) {
@@ -494,7 +506,7 @@ export class HuxerTasks implements vscode.TaskProvider, vscode.Disposable {
   }
 
   private terminal(root: vscode.Uri, prepare: () => Promise<Invocation>, action?: Action,
-                   callback?: (code: number) => void): CommandTerminal {
+                   callback?: (code: number) => void, sourceRoot = root): CommandTerminal {
     const id = root.toString();
     const hasBuildOutput = action !== undefined && action !== 'doctor';
     const terminal = new CommandTerminal(
@@ -515,7 +527,7 @@ export class HuxerTasks implements vscode.TaskProvider, vscode.Disposable {
           this.diagnostics.clear(root);
         }
         if (hasBuildOutput) {
-          this.diagnostics.add(root, line);
+          this.diagnostics.add(root, line, sourceRoot);
         }
       },
       code => {

@@ -160,6 +160,10 @@
         "title": "HuxerUI: Debug"
       },
       {
+        "command": "huxerui.preview",
+        "title": "HuxerUI: Open Live Preview"
+      },
+      {
         "command": "huxerui.watch",
         "title": "HuxerUI: Run with Watch"
       },

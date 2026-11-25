@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
@@ -15,6 +16,7 @@ interface ToolchainRequest {
   operation: Operation;
   device?: string;
   abis?: string[];
+  hostOnly?: boolean;
 }
 
 interface Check {
@@ -22,6 +24,7 @@ interface Check {
   status: string;
   label: string;
   detail?: string;
+  path?: string;
 }
 
 interface Plan {
@@ -78,7 +81,7 @@ function outstanding(plan: Plan): Check[] {
 }
 
 function toolsReady(plan: Plan, request: ToolchainRequest): boolean {
-  if (plan.projectErrors.length) {
+  if (!request.hostOnly && plan.projectErrors.length) {
     throw new Error(plan.projectErrors.join('\n'));
   }
   if (plan.targets[0].ready) {
@@ -96,9 +99,9 @@ function remediation(plan: Plan): string {
     check.label + (check.detail ? ': ' + check.detail : ''))).join('\n');
 }
 
-export async function prepareToolchain(
+async function prepareToolchainPlan(
   tasks: HuxerTasks, project: Project, sdk: Sdk, request: ToolchainRequest, standalone = false,
-): Promise<boolean> {
+): Promise<Plan | undefined> {
   const flags = [request.target, '--operation', request.operation, '--sdk', sdk.root];
   if (request.device) {
     flags.push('--device', request.device);
@@ -108,7 +111,7 @@ export async function prepareToolchain(
   }
   let plan = await diagnose(project, sdk, request, flags);
   if (toolsReady(plan, request)) {
-    return true;
+    return plan;
   }
 
   if (!plan.actions.some(action => action.kind === 'automatic')) {
@@ -129,7 +132,7 @@ export async function prepareToolchain(
     return false;
   });
   if (code === undefined || code === 3 || code === 130) {
-    return false;
+    return undefined;
   }
   if (code === 4) {
     throw new Error('Restart this host to finish installing the HuxerUI toolchain, then try again.');
@@ -141,5 +144,60 @@ export async function prepareToolchain(
   if (!toolsReady(plan, request)) {
     throw new Error([remediation(plan), 'See the toolchain task terminal for installation details.'].filter(Boolean).join('\n'));
   }
-  return true;
+  return plan;
+}
+
+export async function prepareToolchain(
+  tasks: HuxerTasks, project: Project, sdk: Sdk, request: ToolchainRequest, standalone = false,
+): Promise<boolean> {
+  return Boolean(await prepareToolchainPlan(tasks, project, sdk, request, standalone));
+}
+
+export interface WebPreviewToolchain {
+  cmake: string;
+  toolchainFile: string;
+  generator: string;
+  env: NodeJS.ProcessEnv;
+}
+
+export async function prepareWebPreviewToolchain(tasks: HuxerTasks, project: Project, sdk: Sdk):
+  Promise<WebPreviewToolchain | undefined> {
+  // Preview runs its own CMake build and can provide the Web shell itself.
+  const plan = await prepareToolchainPlan(tasks, project, sdk, { target: 'web', operation: 'build', hostOnly: true });
+  if (!plan) {
+    return undefined;
+  }
+  const readyTool = (id: string) => plan.checks.find(check => check.id === id && check.status === 'ready')?.path;
+  const cmake = readyTool('cmake');
+  const compiler = readyTool('web.emcc');
+  if (!cmake || !path.isAbsolute(cmake) || !compiler || !path.isAbsolute(compiler)) {
+    throw new Error('The selected SDK did not identify the CMake and Emscripten executables.');
+  }
+  const compilerDir = path.dirname(await fs.realpath(compiler));
+  const toolchainFile = await fs.realpath(path.join(compilerDir, 'cmake', 'Modules', 'Platform', 'Emscripten.cmake'));
+  // The CLI can discover a managed emsdk that is not active in the extension host.
+  const env = sdkEnvironment(sdk);
+  const pathKey = Object.keys(env).find(key => key.toUpperCase() === 'PATH') ?? 'PATH';
+  env[pathKey] = [compilerDir, path.dirname(cmake), env[pathKey]].filter(Boolean).join(path.delimiter);
+  const emsdk = path.resolve(compilerDir, '..', '..');
+  const config = path.join(emsdk, '.emscripten');
+  if (await fs.stat(config).then(file => file.isFile(), () => false)) {
+    env.EMSDK = emsdk;
+    env.EM_CONFIG = config;
+  }
+  const python = readyTool('web.python');
+  if (python && !env.EMSDK_PYTHON) {
+    env.EMSDK_PYTHON = python;
+  }
+  let generator = process.env.CMAKE_GENERATOR;
+  if (!generator || !['Ninja', 'Ninja Multi-Config', 'Unix Makefiles', 'MinGW Makefiles', 'NMake Makefiles'].includes(generator)) {
+    const ninja = process.platform === 'win32' ? 'ninja.exe' : 'ninja';
+    const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(path.isAbsolute);
+    if ((await Promise.all(dirs.map(dir => fs.stat(path.join(dir, ninja)).then(stat => stat.isFile(), () => false)))).includes(true)) {
+      generator = 'Ninja';
+    } else {
+      generator = process.platform === 'win32' ? 'MinGW Makefiles' : 'Unix Makefiles';
+    }
+  }
+  return { cmake, toolchainFile, generator, env };
 }

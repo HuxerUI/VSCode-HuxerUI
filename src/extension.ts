@@ -11,6 +11,9 @@ import { Sdk, SdkSelection } from './sdk';
 import { registerSidebar, sidebarDebugOptions } from './sidebar';
 import { Action, actions, canRun, Configuration, defaultTarget, HuxerTasks } from './tasks';
 import { prepareToolchain, toolchainOperation } from './toolchain';
+import { WebPreviews } from './webPreview';
+
+let previews: WebPreviews | undefined;
 
 function requireTrust(): void {
   if (!vscode.workspace.isTrusted) {
@@ -247,6 +250,9 @@ async function stopTask(tasks: HuxerTasks): Promise<void> {
 export function activate(context: vscode.ExtensionContext): void {
   const sdkSelection = new SdkSelection(context.globalState, context.globalStorageUri.fsPath);
   const tasks = new HuxerTasks(sdkSelection);
+  const webPreviews = new WebPreviews(sdkSelection, tasks);
+  previews = webPreviews;
+  context.subscriptions.push(webPreviews);
   context.subscriptions.push(sdkSelection, tasks, vscode.tasks.registerTaskProvider('huxerui', tasks));
   registerIntelliSense(context, sdkSelection);
   registerEditorFeatures(context);
@@ -289,10 +295,11 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   command('create', () => createProject(sdkSelection, tasks));
   command('debug', () => debugProject());
+  command('preview', () => webPreviews.open());
   command('stop', () => stopTask(tasks));
   command('openArtifacts', openArtifacts);
 }
 
 export async function deactivate(): Promise<void> {
-  await disposeMobileDebug();
+  await Promise.all([previews?.dispose(), disposeMobileDebug()]);
 }

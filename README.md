@@ -21,6 +21,12 @@ The extension uses the toolchain on the workspace host. In a remote window, conf
 
 SDK downloads run the official HuxerUI installer on the workspace host. It verifies the release checksum and sets `HUXERUI_HOME` and `PATH` for new sessions. HuxerUI commands can use the installed SDK immediately. Restart VS Code from the updated environment to pick up the new default in tools such as CMake Tools.
 
+## Live preview
+
+To preview a HuxerUI CMake application or Library Preview, open a source file and run **HuxerUI: Open Live Preview**. The extension uses the project's selected SDK and Emscripten toolchain. It builds the saved application in `build/live-preview/` under the project root and opens it beside the editor. When the build does not generate an HTML entry, the extension creates one in the preview output. This also supports projects without `platform/web` whose application and dependencies compile with Emscripten.
+
+For a library, the extension builds `examples/preview` into the library root's `build/live-preview/`. Saving project code or changing a Web resource requests a clean Debug build. After a successful build, the page restarts with its initial state. Saves received during a build queue the latest revision. Compilation errors appear in Problems and the **Build Web Preview** task terminal while the previous page stays available. Close the preview tab to stop rebuilding.
+
 ## Edit HuxerUI source
 
 In a CMake or mcpp project, type `[[` or `[[huxerui::` in a C++ file and select `[[huxerui::composable]]` from the suggestions.

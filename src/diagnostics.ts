@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { pathInProject } from './projects';
 
@@ -41,7 +42,7 @@ export class Diagnostics implements vscode.Disposable {
     this.projects.get(root.toString())?.clear();
   }
 
-  add(root: vscode.Uri, line: string): void {
+  add(root: vscode.Uri, line: string, sourceRoot = root): void {
     const parsed = parse(line);
     if (!parsed) {
       return;
@@ -52,7 +53,7 @@ export class Diagnostics implements vscode.Disposable {
       collection = vscode.languages.createDiagnosticCollection('huxerui');
       this.projects.set(root.toString(), collection);
     }
-    const file = pathInProject(root, parsed.file);
+    const file = pathInProject(path.isAbsolute(parsed.file) ? root : sourceRoot, parsed.file);
     const range = new vscode.Range(row, column, row, column + 1);
     const existing = collection.get(file) ?? [];
     if (!existing.some(item => item.range.isEqual(range) && item.severity === severity && item.message === message)) {

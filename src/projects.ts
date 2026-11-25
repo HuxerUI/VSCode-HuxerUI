@@ -99,7 +99,7 @@ export async function inspectProjects(folder: vscode.WorkspaceFolder, root = fol
   return projects;
 }
 
-async function chooseProject(projects: Project[]): Promise<Project | undefined> {
+export async function chooseProject(projects: Project[]): Promise<Project | undefined> {
   if (projects.length <= 1) {
     return projects[0];
   }
@@ -145,16 +145,16 @@ export async function projectsForFile(uri: vscode.Uri): Promise<Project[]> {
   return [];
 }
 
-export async function selectProject(): Promise<Project | undefined> {
+export async function selectProject(choose = chooseProject): Promise<Project | undefined> {
   const uri = vscode.window.activeTextEditor?.document.uri;
   const enclosing = uri ? await projectsForFile(uri) : [];
   if (enclosing.length) {
-    return chooseProject(enclosing);
+    return choose(enclosing);
   }
   const roots = (await Promise.all((vscode.workspace.workspaceFolders ?? []).map(folder =>
     inspectProjects(folder)))).flat();
   if (roots.length) {
-    return chooseProject(roots);
+    return choose(roots);
   }
   const [selected] = await vscode.window.showOpenDialog({
     canSelectFiles: false,
@@ -177,5 +177,5 @@ export async function selectProject(): Promise<Project | undefined> {
   if (!projects.length) {
     throw new Error('The selected directory does not contain a recognized HuxerUI project.');
   }
-  return chooseProject(projects);
+  return choose(projects);
 }
